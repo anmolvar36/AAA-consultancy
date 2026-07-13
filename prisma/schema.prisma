@@ -1,0 +1,328 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id               String   @id @default(uuid())
+  fullName         String
+  email            String   @unique
+  password         String
+  hotlineNumber    String?
+  role             String   @default("consultant") // admin, consultant, operations, finance, marketing, super_admin
+  spokenLanguages  Json?    // Array of strings
+  nationalities    Json?    // Array of strings
+  commissionRate   Float?   @default(0)
+  commissionType   String?  @default("10%")
+  commissionPaid   Float?   @default(0)
+  immigrationBio   String?  @db.Text
+  customPermissions Json?   // e.g. { canViewFinance: true }
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  createdById      String?
+  creator          User?    @relation("UserCreator", fields: [createdById], references: [id])
+  createdUsers     User[]   @relation("UserCreator")
+
+  assignedLeads    Lead[]   @relation("AgentLeads")
+  assignedClients  Client[] @relation("AgentClients")
+  consultations    Consultation[] @relation("AgentConsultations")
+
+  @@map("users")
+}
+
+model Lead {
+  id               String   @id @default(uuid())
+  firstName        String
+  lastName         String
+  email            String
+  phone            String
+  nationality      String?
+  countryOfResidence String?
+  preferredLanguage String? @default("English")
+  serviceType      String?  // DNV, NLV, Business, Study, Tourist, Sworn Translation
+  applicantsCount  String?  @default("Main Only")
+  source           String?  // FB, IG, Website
+  campaignId       String?
+  status           String   @default("New Lead")
+  notes            String?  @db.Text
+  timeline         Json?
+  qualificationData Json?
+  // Meeting Preference (filled by lead via self-fill form)
+  meetingPreferredDate     String?
+  meetingPreferredTime     String?   // morning / afternoon / evening
+  meetingPreferredLanguage String?
+  meetingNotes             String?   @db.Text
+  formSubmittedAt          DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  assignedToId     String?
+  assignedTo       User?    @relation("AgentLeads", fields: [assignedToId], references: [id])
+  
+  clientId         String?  @unique
+  client           Client?  @relation(fields: [clientId], references: [id])
+  consultations    Consultation[]
+
+  @@map("leads")
+}
+
+
+model Client {
+  id               String   @id @default(uuid())
+  firstName        String
+  lastName         String
+  email            String   @unique
+  password         String?
+  isTemporaryPassword Boolean @default(true)
+  phone            String
+  nationality      String?
+  countryOfResidence String?
+  preferredLanguage String? @default("English")
+  serviceType      String?
+  packageId        String?
+  applicantsCount  String?  @default("Main Only")
+  
+  status           String   @default("Waiting for Payment")
+  visaStatus       String   @default("Not Started")
+  documentUploadAllowed Boolean @default(false)
+  profileSummary   String?  @db.Text
+  dependentsDetails Json?
+  
+  deviceFingerprint String?
+  isBlocked         Boolean  @default(false)
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  assignedToId     String?
+  assignedTo       User?    @relation("AgentClients", fields: [assignedToId], references: [id])
+
+  lead             Lead?
+  documents        Document[]
+  payments         Payment[]
+  applicationCycles ApplicationCycle[]
+  refundRequests   RefundRequest[]
+  communications   CommunicationLog[]
+
+  @@map("clients")
+}
+
+model Consultation {
+  id               String   @id @default(uuid())
+  date             String
+  timeSlot         String
+  durationMinutes  Int      @default(20)
+  meetingLink      String?
+  recordingUrl     String?
+  status           String   @default("Scheduled") // Scheduled, Completed, NO_SHOW, Cancelled
+  
+  eligibility      String?  // Eligible, Not Eligible
+  recommendedService String?
+  recommendedPackageId String?
+  internalNotes    String?  @db.Text
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  leadId           String?
+  lead             Lead?    @relation(fields: [leadId], references: [id])
+
+  consultantId     String?
+  consultant       User?    @relation("AgentConsultations", fields: [consultantId], references: [id])
+
+  @@map("consultations")
+}
+
+model ApplicationCycle {
+  id               String   @id @default(uuid())
+  clientId         String
+  client           Client   @relation(fields: [clientId], references: [id])
+  
+  originalSubmissionDate DateTime?
+  refusalDate      DateTime?
+  refusalReason    String?  @db.Text
+  resubmissionDate DateTime?
+  lawyerAssigned   String?
+  appealDeadline   DateTime?
+  status           String   @default("Resubmission in Progress")
+  serviceType      String?
+  
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  payments         Payment[]
+  documents        Document[]
+  history          AuditLog[]
+
+  @@map("application_cycles")
+}
+
+model Payment {
+  id               String   @id @default(uuid())
+  clientId         String
+  client           Client   @relation(fields: [clientId], references: [id])
+  applicationId    String?
+  applicationCycle ApplicationCycle? @relation(fields: [applicationId], references: [id])
+  
+  amount           Float
+  discount         Float    @default(0)
+  totalPaid        Float    @default(0)
+  status           String   @default("Pending") // Pending, Paid, Refund Under Review, Refunded
+  paymentMethod    String?
+  transactionId    String?
+  gatewayId        String?
+  billingDate      DateTime @default(now())
+  dueDate          DateTime
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@map("payments")
+}
+
+model Document {
+  id               String   @id @default(uuid())
+  clientId         String
+  client           Client   @relation(fields: [clientId], references: [id])
+  applicationId    String?
+  applicationCycle ApplicationCycle? @relation(fields: [applicationId], references: [id])
+  
+  name             String
+  category         String
+  url              String
+  size             String?
+  status           String   @default("Pending Verification") // VERIFIED, REJECTED
+  comment          String?  @db.Text
+
+  uploadedDate     DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  belongsTo        String?  // e.g. "Main Applicant", "Spouse", "Child 1"
+
+  @@map("documents")
+}
+
+model RefundRequest {
+  id          String   @id @default(uuid())
+  clientId    String
+  client      Client   @relation(fields: [clientId], references: [id])
+  
+  category    String
+  reason      String?  @db.Text
+  amount      Float
+  status      String   @default("Pending Review") // Pending Review, Approved, Processed, Rejected
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("refund_requests")
+}
+
+model CompanySetting {
+  id                   String   @id @default(uuid())
+  companyName          String   @default("AAA Business Consultancy LLC")
+  phone                String   @default("+971 50 955 4142")
+  email                String   @default("info@aaabusinessconsultancy.com")
+  address              String   @default("Business Village, Block B, 4th Floor, Office F09, Deira, Dubai, UAE")
+  vatRate              Float    @default(5)
+  vatId                String   @default("VAT-AE-2026-9932")
+  website              String   @default("https://aaabusinessconsultancy.com")
+  incorporationDate    String   @default("2018-05-12")
+  autoAssignConsultant Boolean  @default(true)
+  recordingStorage     String   @default("cloud")
+  swornTranslationRates Json?
+  
+  updatedAt            DateTime @updatedAt
+
+  @@map("company_settings")
+}
+
+model VisaService {
+  id                   String   @id @default(uuid())
+  name                 String
+  category             String
+  basePrice            Float
+  active               Boolean  @default(true)
+
+  @@map("visa_services")
+}
+
+model RelocationPackage {
+  id                   String   @id @default(uuid())
+  name                 String
+  description          String   @db.Text
+  price                Float
+  includes             Json?    // Array of strings
+
+  @@map("relocation_packages")
+}
+
+model Template {
+  id                   String   @id @default(uuid())
+  type                 String   // "email" or "whatsapp"
+  subject              String?  
+  body                 String   @db.Text
+  
+  updatedAt            DateTime @updatedAt
+
+  @@map("templates")
+}
+
+model CommunicationLog {
+  id                 String   @id @default(uuid())
+  clientId           String
+  client             Client   @relation(fields: [clientId], references: [id])
+  channel            String   // WHATSAPP, EMAIL, MEETING
+  direction          String   // INBOUND, OUTBOUND
+  messageId          String?  @unique // Deduplication (Meta/WA Message ID)
+  externalProviderId String?  
+  deliveryStatus     String   // SENT, DELIVERED, FAILED
+  readStatus         Boolean  @default(false)
+  failureReason      String?  @db.Text
+  content            String   @db.Text
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@map("communication_logs")
+}
+
+model AuditLog {
+  id               String   @id @default(uuid())
+  applicationId    String
+  applicationCycle ApplicationCycle @relation(fields: [applicationId], references: [id])
+  actorId          String   // System, User UUID, or Webhook ID
+  action           String   // e.g., STATUS_CHANGED, DOC_UPLOADED
+  previousState    Json?
+  newState         Json
+  createdAt        DateTime @default(now()) // Immutable (No updateAt)
+
+  @@map("audit_logs")
+}
+
+model MarketingSpend {
+  id        String   @id @default(uuid())
+  channel   String   @unique
+  amount    Float    @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("marketing_spend")
+}
+
+model Notification {
+  id          String   @id @default(uuid())
+  userId      String   // recipient: assigned operator's user id
+  type        String   @default("new_document") // new_document | general
+  title       String
+  body        String   @db.Text
+  clientId    String?
+  documentId  String?
+  isRead      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@map("notifications")
+}

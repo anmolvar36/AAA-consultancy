@@ -41,10 +41,51 @@ exports.handleMetaWebhook = async (req, res) => {
   // Meta requires a 200 OK immediately
   res.status(200).send('EVENT_RECEIVED');
 
-  // Enqueue job to process message and auto-reply
-  await communicationsQueue.add('process-meta-message', payload, {
-    jobId: payload.entry?.[0]?.id || Date.now().toString(), // Simple idempotency
-  });
+  try {
+    const entry = payload.entry?.[0];
+    const change = entry?.changes?.[0];
+    const value = change?.value;
+
+    // Check if WhatsApp Webhook Message
+    if (value?.messages && value.messages.length > 0) {
+      for (const msg of value.messages) {
+        if (msg.from) {
+          const phone = msg.from;
+          const contact = value.contacts?.find(c => c.wa_id === phone);
+          const name = contact?.profile?.name || 'Applicant';
+          const message = msg.text?.body || '';
+
+          console.log(`Enqueuing WhatsApp message from ${phone} (${name}): ${message}`);
+          await communicationsQueue.add('process-meta-message', {
+            phone,
+            name,
+            message
+          }, {
+            jobId: msg.id || Date.now().toString()
+          });
+        }
+      }
+    } else {
+      // Fallback or Messenger / Mock format (like in TESTING.md)
+      const messaging = entry?.messaging?.[0];
+      if (messaging) {
+        const phone = messaging.sender?.id;
+        const message = messaging.message?.text || '';
+        const name = 'Applicant';
+
+        console.log(`Enqueuing fallback Messenger message from ${phone}`);
+        await communicationsQueue.add('process-meta-message', {
+          phone,
+          name,
+          message
+        }, {
+          jobId: messaging.message?.mid || Date.now().toString()
+        });
+      }
+    }
+  } catch (error) {
+    console.error('Error parsing Meta webhook payload:', error);
+  }
 };
 
 exports.handleStripeWebhook = async (req, res) => {

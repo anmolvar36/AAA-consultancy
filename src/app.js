@@ -7,12 +7,19 @@ const { Server } = require('socket.io');
 const app = express();
 const server = http.createServer(app);
 
+// CORS Configuration
+const corsOptions = {
+  origin: process.env.CLIENT_URL,
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  credentials: true
+};
+
+// Express CORS
+app.use(cors(corsOptions));
+
 // Setup Socket.io
 const io = new Server(server, {
-  cors: {
-    origin: "*", // Or specify frontend URL
-    methods: ["GET", "POST", "PUT", "DELETE"]
-  }
+  cors: corsOptions
 });
 
 // Expose io to routes if needed
@@ -41,7 +48,7 @@ io.on('connection', (socket) => {
 });
 
 // Middleware
-app.use(cors());
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

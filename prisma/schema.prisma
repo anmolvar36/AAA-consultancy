@@ -52,6 +52,7 @@ model Lead {
   notes            String?  @db.Text
   timeline         Json?
   qualificationData Json?
+  dependentsDetails Json?
   // Meeting Preference (filled by lead via self-fill form)
   meetingPreferredDate     String?
   meetingPreferredTime     String?   // morning / afternoon / evening

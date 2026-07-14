@@ -16,7 +16,8 @@ const getClients = async (req, res) => {
       name: `${c.firstName} ${c.lastName}`,
       serviceId: c.serviceType,
       assignedConsultantName: c.assignedTo?.fullName,
-      assignedConsultantId: c.assignedToId
+      assignedConsultantId: c.assignedToId,
+      hasCredentials: !!c.password
     }));
     
     res.json(mapped);
@@ -30,11 +31,30 @@ const createClient = async (req, res) => {
     const { 
       firstName, lastName, email, phone, nationality, 
       serviceType, serviceId, assignedToId, assignedConsultantId, 
-      leadId, packageId, applicantsCount, status, profileSummary 
+      leadId, packageId, applicantsCount, status, profileSummary,
+      dependentsDetails
     } = req.body;
     
     // Frontend sometimes sends assignedConsultantId instead of assignedToId
     const finalAssignedTo = assignedToId || assignedConsultantId;
+
+    // Fetch dependentsDetails from lead if leadId is passed
+    let fetchedDependentsDetails = null;
+    if (leadId) {
+      try {
+        const leadObj = await prisma.lead.findUnique({
+          where: { id: leadId },
+          select: { dependentsDetails: true }
+        });
+        if (leadObj && leadObj.dependentsDetails) {
+          fetchedDependentsDetails = leadObj.dependentsDetails;
+        }
+      } catch (err) {
+        console.warn("Could not fetch lead dependents details:", err);
+      }
+    }
+
+    const finalDeps = dependentsDetails || fetchedDependentsDetails;
 
     // Check if client with this email already exists
     let client = null;
@@ -57,6 +77,7 @@ const createClient = async (req, res) => {
           assignedToId: finalAssignedTo || client.assignedToId,
           packageId: packageId || client.packageId,
           applicantsCount: applicantsCount ? String(applicantsCount) : client.applicantsCount,
+          dependentsDetails: finalDeps !== undefined && finalDeps !== null ? finalDeps : client.dependentsDetails,
           status: status || client.status,
           profileSummary: profileSummary || client.profileSummary
         }
@@ -73,6 +94,7 @@ const createClient = async (req, res) => {
           assignedToId: finalAssignedTo,
           packageId,
           applicantsCount: String(applicantsCount),
+          dependentsDetails: finalDeps || undefined,
           status: status || 'Waiting for Payment',
           profileSummary
         }

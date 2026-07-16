@@ -7,31 +7,108 @@ let DEFAULT_CUSTOMIZATION = {
     { id: 'marketing', label: 'Marketing Executive' }
   ],
   admin: {
-      menus: ['Dashboard', 'Agents', 'Active Cases', 'Doc Verification', 'Finance', 'Closed Cases', 'Clients', 'Leads', 'Social Inbox', 'Marketing', 'Calendar', 'All Agents Performance', 'Integrations'],
-      cards: ['Total Clients', 'Today\'s Clients', 'Total Consultations', 'Today\'s Consultations', 'Upcoming Meetings', 'Pending Payments', 'Total Revenue', 'Active Cases', 'Completed Cases', 'Lost Consultations', 'Revenue Today', 'Outstanding Revenue', 'Refunded (50% Rejections)'],
-      features: ['canEditTranslationRates']
+    menus: ['Dashboard', 'Agents', 'Active Cases', 'Doc Verification', 'Finance', 'Closed Cases', 'Clients', 'Leads', 'Social Inbox', 'Marketing', 'Calendar', 'All Agents Performance', 'Integrations'],
+    cards: ['Total Clients', 'Today\'s Clients', 'Total Consultations', 'Today\'s Consultations', 'Upcoming Meetings', 'Pending Payments', 'Total Revenue', 'Active Cases', 'Completed Cases', 'Lost Consultations', 'Revenue Today', 'Outstanding Revenue', 'Refunded (50% Rejections)'],
+    features: ['canEditTranslationRates']
+  },
+  operations: {
+    menus: ['Dashboard', 'Agents', 'Active Cases', 'Doc Verification', 'Closed Cases', 'Clients', 'Leads', 'Social Inbox', 'Marketing', 'Calendar', 'All Agents Performance'],
+    cards: ['Total Clients', 'Today\'s Clients', 'Total Consultations', 'Today\'s Consultations', 'Upcoming Meetings', 'Active Cases', 'Completed Cases'],
+    features: []
+  },
+  finance: {
+    menus: ['Dashboard', 'Finance'],
+    cards: ['Total Revenue', 'Pending Payments'],
+    features: []
+  },
+  consultant: {
+    menus: ['Dashboard', 'Clients', 'Leads', 'Social Inbox', 'Calendar'],
+    cards: ['Upcoming Meetings', 'Active Cases'],
+    features: []
+  },
+  marketing: {
+    menus: ['Dashboard', 'Leads', 'Marketing'],
+    cards: ['Total Consultations', 'Today\'s Consultations'],
+    features: []
+  },
+  documentChecklists: {
+    dnv: {
+      main: ['Passport (Copy)', 'Employment Verification Letter', 'Remote Income Bank Statements', 'Social Security Certificate'],
+      spouse: ['Passport (Copy)', 'Marriage Certificate'],
+      minorChild: ['Passport (Copy)', 'Birth Certificate', 'School Enrollment Confirmation'],
+      adultChild: ['Passport (Copy)', 'Proof of Financial Dependency', 'Clean Criminal Record Certificate'],
+      parent: ['Passport (Copy)', 'Proof of Financial Dependency', 'Medical Insurance Certificate'],
+      other: ['Passport (Copy)', 'Relationship Verification Certificate']
     },
-    operations: {
-      menus: ['Dashboard', 'Agents', 'Active Cases', 'Doc Verification', 'Closed Cases', 'Clients', 'Leads', 'Social Inbox', 'Marketing', 'Calendar', 'All Agents Performance'],
-      cards: ['Total Clients', 'Today\'s Clients', 'Total Consultations', 'Today\'s Consultations', 'Upcoming Meetings', 'Active Cases', 'Completed Cases'],
-      features: []
+    nlv: {
+      main: ['Passport (Copy)', 'Spanish Health Insurance Policy', 'Clean Criminal Record Certificate', 'Savings Bank Statements'],
+      spouse: ['Passport (Copy)', 'Marriage Certificate'],
+      minorChild: ['Passport (Copy)', 'Birth Certificate'],
+      adultChild: ['Passport (Copy)', 'Proof of Financial Dependency', 'Clean Criminal Record Certificate'],
+      parent: ['Passport (Copy)', 'Proof of Financial Dependency', 'Spanish Health Insurance Policy'],
+      other: ['Passport (Copy)', 'Relationship Verification Certificate']
     },
-    finance: {
-      menus: ['Dashboard', 'Finance'],
-      cards: ['Total Revenue', 'Pending Payments'],
-      features: []
+    study: {
+      main: ['Passport (Copy)', 'Complutense Admission Letter', 'Medical Certificate', 'Sufficient Funds Guarantee'],
+      spouse: ['Passport (Copy)', 'Marriage Certificate'],
+      minorChild: ['Passport (Copy)', 'Birth Certificate'],
+      adultChild: ['Passport (Copy)', 'Proof of Financial Dependency'],
+      parent: ['Passport (Copy)', 'Proof of Financial Dependency'],
+      other: ['Passport (Copy)']
     },
-    consultant: {
-      menus: ['Dashboard', 'Clients', 'Leads', 'Social Inbox', 'Calendar'],
-      cards: ['Upcoming Meetings', 'Active Cases'],
-      features: []
+    property: {
+      main: ['Passport (Copy)', 'Property Purchase Escrow Registry', 'Spanish Bank Account Certificate'],
+      spouse: ['Passport (Copy)', 'Marriage Certificate'],
+      minorChild: ['Passport (Copy)', 'Birth Certificate'],
+      adultChild: ['Passport (Copy)', 'Proof of Financial Dependency'],
+      parent: ['Passport (Copy)', 'Proof of Financial Dependency'],
+      other: ['Passport (Copy)']
     },
-    marketing: {
-      menus: ['Dashboard', 'Leads', 'Marketing'],
-      cards: ['Total Consultations', 'Today\'s Consultations'],
-      features: []
+    family: {
+      main: ['Passport (Copy)', 'Relationship Verification Certificate', 'Sufficient Income Proof'],
+      spouse: ['Passport (Copy)', 'Marriage Certificate'],
+      minorChild: ['Passport (Copy)', 'Birth Certificate'],
+      adultChild: ['Passport (Copy)', 'Proof of Financial Dependency', 'Clean Criminal Record Certificate'],
+      parent: ['Passport (Copy)', 'Proof of Financial Dependency', 'Medical Insurance Certificate'],
+      other: ['Passport (Copy)', 'Relationship Verification Certificate']
     }
-  };
+  },
+  flowAutomationSettings: {
+    defaultMeetingDuration: 30,
+    joinGracePeriod: 10,
+    adultAgeThreshold: 18,
+    bookingAllowedStart: '09:00',
+    bookingAllowedEnd: '18:00',
+    welcomeEmailSubject: 'Welcome to AAA Business Consultancy - Your Client Portal is Ready! ✈️',
+    welcomeEmailTemplate: `<div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; color: #2d3748;">
+  <div style="text-align: center; margin-bottom: 24px;">
+    <h2 style="color: #4f46e5; margin: 0;">AAA Business Consultancy</h2>
+    <p style="color: #718096; font-size: 14px; margin: 4px 0 0;">Relocation & Spain Visa Services</p>
+  </div>
+  <h3 style="color: #1a202c; border-bottom: 1px solid #edf2f7; padding-bottom: 10px;">Welcome to the Client Portal! 🎉</h3>
+  <p>Hello <strong>{client_name}</strong>,</p>
+  <p>Congratulations! Your file has been initialized. We have successfully set up your profile and created your Client Portal account.</p>
+  
+  <p>You can now log in to select your relocation package, complete your payment, and upload your visa documents.</p>
+  
+  <div style="background-color: #f7fafc; border-left: 4px solid #4f46e5; padding: 16px; margin: 20px 0; border-radius: 4px;">
+    <h4 style="margin: 0 0 8px; color: #4f46e5;">Access Credentials</h4>
+    <p style="margin: 4px 0;"><strong>Portal URL:</strong> <a href="{portal_url}" style="color: #4f46e5; text-decoration: underline;">Login Here</a></p>
+    <p style="margin: 4px 0;"><strong>Username:</strong> {username}</p>
+    <p style="margin: 4px 0;"><strong>Temporary Password:</strong> <code style="background-color: #edf2f7; padding: 2px 6px; border-radius: 4px; font-weight: bold; color: #e11d48;">{temp_password}</code></p>
+  </div>
+  
+  <p style="font-size: 13px; color: #e11d48; font-weight: 600;">
+    ⚠️ Note: For your security, you will be prompted to change this temporary password immediately upon your first login.
+  </p>
+  
+  <p>If you have any questions, feel free to contact your assigned consultant.</p>
+  <p style="font-size: 13px; color: #718096; margin-top: 30px; border-top: 1px solid #edf2f7; padding-top: 10px;">
+    This is an automated notification from AAA Visa CRM. Please do not reply directly to this email.
+  </p>
+</div>`
+  }
+};
 
 const getCustomizationSettings = async (req, res) => {
   res.json(DEFAULT_CUSTOMIZATION);
@@ -300,6 +377,7 @@ const updateWhatsappTemplates = async (req, res) => {
 module.exports = { 
   getCustomizationSettings, 
   updateCustomizationSettings,
+  getCustomization: () => DEFAULT_CUSTOMIZATION,
   getLeadStages,
   updateLeadStages,
   getCompanySettings,

@@ -30,35 +30,42 @@ const setupWorkers = () => {
     const { phone, email, name, message } = job.data;
     
     // Auto-reply logic for Meta/WhatsApp Click ads or website forms
-    if (job.name === 'process-meta-message' || job.name === 'process-tiktok-lead') {
+    if (job.name === 'process-meta-message' || job.name === 'process-twilio-message' || job.name === 'process-tiktok-lead') {
       try {
-        if (phone) {
-          // Send automatic first response on WhatsApp
-          await sendWhatsAppMessage({
-            to: phone,
-            templateName: 'automated_first_response',
-            languageCode: 'en',
-            components: [
-              {
-                type: 'body',
-                parameters: [
-                  { type: 'text', text: name || 'Applicant' }
-                ]
-              }
-            ]
-          });
-        }
-        
-        if (email) {
-          // Send automated confirmation email
-          await sendEmail({
-            to: email,
-            subject: 'Spain Visa & Residency Services - Next Steps',
-            html: `<h3>Thank you for contacting AAA Business Consultancy, ${name || 'Applicant'}!</h3>
-                   <p>We received your inquiry regarding Spain Visa & Residency Services.</p>
-                   <p>To book your Free Eligibility Assessment, please click the link below:</p>
-                   <p><a href="https://aaabusinessconsultancy.com/book-assessment">Book Free Assessment</a></p>`
-          });
+        if (job.name === 'process-meta-message' || job.name === 'process-twilio-message') {
+          // Process inbound user message via the Chatbot
+          const chatbotService = require('../services/chatbotService');
+          await chatbotService.handleChatbotMessage(phone, name || 'Applicant', message || '');
+        } else {
+          // For process-tiktok-lead (external lead form submission)
+          if (phone) {
+            // Send automatic first response on WhatsApp
+            await sendWhatsAppMessage({
+              to: phone,
+              templateName: 'automated_first_response',
+              languageCode: 'en',
+              components: [
+                {
+                  type: 'body',
+                  parameters: [
+                    { type: 'text', text: name || 'Applicant' }
+                  ]
+                }
+              ]
+            });
+          }
+          
+          if (email) {
+            // Send automated confirmation email
+            await sendEmail({
+              to: email,
+              subject: 'Spain Visa & Residency Services - Next Steps',
+              html: `<h3>Thank you for contacting AAA Business Consultancy, ${name || 'Applicant'}!</h3>
+                     <p>We received your inquiry regarding Spain Visa & Residency Services.</p>
+                     <p>To book your Free Eligibility Assessment, please click the link below:</p>
+                     <p><a href="https://aaabusinessconsultancy.com/book-assessment">Book Free Assessment</a></p>`
+            });
+          }
         }
       } catch (err) {
         console.error('Failed to process incoming communications webhook job:', err);

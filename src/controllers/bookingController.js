@@ -1,7 +1,10 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { remindersQueue, noShowEnforcerQueue } = require('../queues/queueSetup');
-const pdfParse = require('pdf-parse');
+const { PDFParse } = require('pdf-parse');
+const { sendEmail } = require('../services/emailService');
+const { sendWhatsAppMessage } = require('../services/whatsappService');
+const zoomService = require('../services/zoomService');
 
 exports.createEligibilityBooking = async (req, res) => {
   try {
@@ -94,13 +97,41 @@ exports.createEligibilityBooking = async (req, res) => {
       }
     });
 
+    let meetingLink = null;
+    let consultationStatus = 'REQUESTED';
+
+    if (zoomService.isConfigured) {
+      try {
+        let startTimeISO = new Date().toISOString();
+        const timeStr = timeSlot && timeSlot.includes(':') ? timeSlot : '10:00';
+        const dateObj = new Date(`${date}T${timeStr}`);
+        if (!isNaN(dateObj.getTime())) {
+          startTimeISO = dateObj.toISOString();
+        }
+
+        const zoomMeeting = await zoomService.createZoomMeeting({
+          topic: `Eligibility Assessment for ${firstName} ${lastName}`,
+          startTime: startTimeISO,
+          durationMinutes: 20
+        });
+
+        if (zoomMeeting) {
+          meetingLink = zoomMeeting.joinUrl;
+          consultationStatus = 'Scheduled';
+        }
+      } catch (zoomErr) {
+        console.error('Failed to create Zoom meeting for booking:', zoomErr.message);
+      }
+    }
+
     // 6. Create Booking (Consultation)
     const consultation = await prisma.consultation.create({
       data: {
         date,
         timeSlot,
-        status: 'REQUESTED',
+        status: consultationStatus,
         leadId: lead.id,
+        meetingLink
       }
     });
 
@@ -121,6 +152,107 @@ exports.createEligibilityBooking = async (req, res) => {
         delay: delay
       });
     }
+
+    // Asynchronously trigger instant Email and WhatsApp confirmations + reminders
+    (async () => {
+      try {
+        const clientName = `${firstName} ${lastName}`;
+        const link = meetingLink || 'https://zoom.us';
+
+        console.log(`[NOTIFICATIONS] Dispatching booking confirmation for Lead: ${clientName} (${phone} / ${email})`);
+
+        // 1. Send WhatsApp Message
+        try {
+          await sendWhatsAppMessage({
+            to: phone,
+            templateName: 'consultation_scheduled_confirmation',
+            components: [
+              {
+                type: 'body',
+                parameters: [
+                  { type: 'text', text: firstName },
+                  { type: 'text', text: date },
+                  { type: 'text', text: timeSlot },
+                  { type: 'text', text: link }
+                ]
+              }
+            ]
+          });
+        } catch (waErr) {
+          console.error('[NOTIFICATIONS] Failed to send WhatsApp confirmation:', waErr.message);
+        }
+
+        // 2. Send Email
+        try {
+          const emailHtml = `
+            <h3>Spain Visa & Relocation - Assessment Booking Confirmed</h3>
+            <p>Dear ${firstName},</p>
+            <p>Thank you for booking your Free Eligibility Assessment and Consultation with AAA Business Consultancy.</p>
+            <p><strong>Appointment Details:</strong></p>
+            <ul>
+              <li><strong>Date:</strong> ${date}</li>
+              <li><strong>Time:</strong> ${timeSlot} (UTC)</li>
+              <li><strong>Duration:</strong> 20 Minutes</li>
+            </ul>
+            <p><strong>Meeting Join Link:</strong><br/>
+               <a href="${link}" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block; margin-top: 10px;">Join Zoom Meeting</a>
+            </p>
+            <p><em>Important: If you do not join your scheduled Free Eligibility Assessment within 10 minutes of the appointment time, your booking will be automatically cancelled. Due to high demand, missed appointments are not eligible for rescheduling.</em></p>
+            <p>Thank you for choosing AAA Business Consultancy!</p>
+          `;
+          await sendEmail({
+            to: email,
+            subject: 'Booking Confirmed: Spain Visa Eligibility Assessment',
+            html: emailHtml
+          });
+        } catch (emailErr) {
+          console.error('[NOTIFICATIONS] Failed to send Email confirmation:', emailErr.message);
+        }
+
+        // 3. Schedule 3 Reminders (24h, 1h, 10m before)
+        if (remindersQueue && remindersQueue.add) {
+          const mStart = new Date(`${date}T${timeSlot.includes(':') ? timeSlot : '10:00'}`);
+          if (!isNaN(mStart.getTime())) {
+            const now = Date.now();
+
+            const scheduleReminder = async (label, timeBeforeMs, subject, textLabel) => {
+              const reminderTime = mStart.getTime() - timeBeforeMs;
+              const dly = reminderTime - now;
+              if (dly > 0) {
+                await remindersQueue.add('send-reminder', {
+                  toEmail: email,
+                  toPhone: phone,
+                  subject: subject,
+                  emailHtml: `<h3>Meeting Reminder</h3><p>Dear ${firstName}, your Spain Visa Consultation is in ${textLabel}.</p><p>Zoom Join Link: <a href="${link}">${link}</a></p>`,
+                  whatsappTemplate: 'consultation_scheduled_confirmation',
+                  whatsappComponents: [
+                    {
+                      type: 'body',
+                      parameters: [
+                        { type: 'text', text: firstName },
+                        { type: 'text', text: date },
+                        { type: 'text', text: timeSlot },
+                        { type: 'text', text: link }
+                      ]
+                    }
+                  ]
+                }, {
+                  jobId: `reminder-${label}-${consultation.id}`,
+                  delay: dly
+                });
+                console.log(`[NOTIFICATIONS] Enqueued ${label} reminder with delay: ${Math.round(dly / 60000)} minutes`);
+              }
+            };
+
+            await scheduleReminder('24h', 24 * 60 * 60 * 1000, 'Reminder: Spain Visa Consultation in 24 Hours', '24 Hours');
+            await scheduleReminder('1h', 1 * 60 * 60 * 1000, 'Reminder: Spain Visa Consultation in 1 Hour', '1 Hour');
+            await scheduleReminder('10m', 10 * 60 * 1000, 'Urgent Reminder: Spain Visa Consultation in 10 Minutes', '10 Minutes');
+          }
+        }
+      } catch (err) {
+        console.error('[NOTIFICATIONS] Error sending booking confirmation:', err);
+      }
+    })().catch(err => console.error('[NOTIFICATIONS] Async error:', err));
 
     return res.status(201).json({
       success: true,
@@ -145,8 +277,9 @@ exports.uploadTranslationDocument = async (req, res) => {
     }
 
     // Parse PDF
-    const data = await pdfParse(req.file.buffer);
-    const text = data.text;
+    const parser = new PDFParse({ data: req.file.buffer });
+    const result = await parser.getText();
+    const text = result.pages.map(p => p.text).join('\n');
     
     // Count words (naive whitespace split)
     const wordCount = text.trim().split(/\s+/).filter(word => word.length > 0).length;
@@ -169,5 +302,121 @@ exports.uploadTranslationDocument = async (req, res) => {
   } catch (error) {
     console.error('PDF Parse Error:', error);
     return res.status(500).json({ success: false, error: 'Failed to parse PDF document' });
+  }
+};
+
+exports.checkoutTranslationDocument = async (req, res) => {
+  const crypto = require('crypto');
+  const bcrypt = require('bcrypt');
+
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'No file uploaded' });
+    }
+
+    const {
+      firstName,
+      lastName,
+      email,
+      phone,
+      nationality,
+      sourceLanguage,
+      targetLanguage,
+      wordCount,
+      estimatedPrice
+    } = req.body;
+
+    if (!firstName || !lastName || !email || !phone) {
+      return res.status(400).json({ success: false, message: 'Missing required client details' });
+    }
+
+    // 1. Find or create Client
+    let client = await prisma.client.findUnique({
+      where: { email: email.toLowerCase() }
+    });
+
+    let generatedPassword = '';
+    if (!client) {
+      generatedPassword = crypto.randomBytes(8).toString('hex');
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash(generatedPassword, salt);
+
+      client = await prisma.client.create({
+        data: {
+          firstName,
+          lastName,
+          email: email.toLowerCase(),
+          phone,
+          nationality: nationality || null,
+          serviceType: 'Spanish Sworn Translation',
+          password: hashedPassword,
+          isTemporaryPassword: true,
+          status: 'Documents Under Review'
+        }
+      });
+    } else {
+      client = await prisma.client.update({
+        where: { id: client.id },
+        data: { status: 'Documents Under Review' }
+      });
+    }
+
+    // 2. Save Document record
+    const document = await prisma.document.create({
+      data: {
+        clientId: client.id,
+        name: req.file.originalname,
+        category: 'Translation Input',
+        url: `/uploads/${req.file.filename}`,
+        size: `${(req.file.size / 1024 / 1024).toFixed(2)} MB`,
+        status: 'Pending Verification',
+        belongsTo: 'Main Applicant'
+      }
+    });
+
+    // 3. Create Case Cycle (ApplicationCycle)
+    const applicationCycle = await prisma.applicationCycle.create({
+      data: {
+        clientId: client.id,
+        serviceType: 'sworn_translation',
+        status: 'Documents Under Review'
+      }
+    });
+
+    // 4. Create Payment Record
+    const payment = await prisma.payment.create({
+      data: {
+        clientId: client.id,
+        applicationId: applicationCycle.id,
+        amount: Number(estimatedPrice) || 0,
+        totalPaid: Number(estimatedPrice) || 0,
+        status: 'Paid',
+        paymentMethod: 'Stripe Mock Auto',
+        dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
+      }
+    });
+
+    // 5. Generate Stripe Mock Link (Direct portal redirect for local testing)
+    const paymentUrl = `http://localhost:5173/#/portal/login?success=true&clientId=${client.id}&tempPassword=${generatedPassword || 'Pre-existing'}`;
+
+    // Update payment record with mock gateway details
+    await prisma.payment.update({
+      where: { id: payment.id },
+      data: { gatewayId: `sess_${payment.id}` }
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: 'Checkout initialized successfully',
+      data: {
+        clientId: client.id,
+        paymentUrl,
+        tempPassword: generatedPassword || null
+      }
+    });
+
+  } catch (error) {
+    console.error('Translation Checkout Error:', error);
+    return res.status(500).json({ success: false, error: 'Internal Server Error during checkout' });
   }
 };

@@ -3,7 +3,10 @@ const { createDocumentNotification } = require('./notificationController');
 
 const getDocuments = async (req, res) => {
   try {
+    const whereClause = req.user.role === 'client' ? { clientId: req.user.id } : {};
+
     const documents = await prisma.document.findMany({
+      where: whereClause,
       include: {
         client: { select: { firstName: true, lastName: true } }
       },

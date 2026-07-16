@@ -1,11 +1,26 @@
 const prisma = require('../config/db');
 const zoomService = require('../services/zoomService');
+const { sendEmail } = require('../services/emailService');
+const { sendWhatsAppMessage } = require('../services/whatsappService');
+const { remindersQueue } = require('../queues/queueSetup');
 
 const getConsultations = async (req, res) => {
   try {
+    let whereClause = {};
+    if (req.user.role === 'client') {
+      const lead = await prisma.lead.findUnique({ where: { clientId: req.user.id } });
+      whereClause = {
+        OR: [
+          { leadId: req.user.id },
+          ...(lead ? [{ leadId: lead.id }] : [])
+        ]
+      };
+    }
+
     const consultations = await prisma.consultation.findMany({
+      where: whereClause,
       include: {
-        lead: { select: { firstName: true, lastName: true, email: true } },
+        lead: { select: { firstName: true, lastName: true, email: true, clientId: true } },
         consultant: { select: { fullName: true } }
       },
       orderBy: { createdAt: 'desc' }
@@ -78,6 +93,9 @@ const createConsultation = async (req, res) => {
       }
     });
 
+    // Trigger email, whatsapp, and reminder schedule in the background
+    sendConsultationNotifications(consultation).catch(err => console.error('[NOTIFICATIONS] Async error:', err));
+
     res.status(201).json(consultation);
   } catch (error) {
     console.error('Error booking consultation:', error);
@@ -118,10 +136,45 @@ const respondToConsultation = async (req, res) => {
     const isDecline = action === 'decline';
     const newStatus = isDecline ? 'Declined' : 'Scheduled';
 
+    const existingConsultation = await prisma.consultation.findUnique({
+      where: { id },
+      include: { lead: true }
+    });
+    if (!existingConsultation) {
+      return res.status(404).json({ message: 'Consultation not found.' });
+    }
+
+    let meetingLink = existingConsultation.meetingLink;
+    if (action === 'accept' && !meetingLink && zoomService.isConfigured) {
+      try {
+        let startTimeISO = new Date().toISOString();
+        if (existingConsultation.date) {
+          const timeStr = existingConsultation.timeSlot && existingConsultation.timeSlot.includes(':') 
+            ? existingConsultation.timeSlot 
+            : '10:00';
+          const dateObj = new Date(`${existingConsultation.date}T${timeStr}`);
+          if (!isNaN(dateObj.getTime())) {
+            startTimeISO = dateObj.toISOString();
+          }
+        }
+        const zoomMeeting = await zoomService.createZoomMeeting({
+          topic: `Eligibility Assessment for Lead ${existingConsultation.leadId || ''}`,
+          startTime: startTimeISO,
+          durationMinutes: existingConsultation.durationMinutes || 30
+        });
+        if (zoomMeeting) {
+          meetingLink = zoomMeeting.joinUrl;
+        }
+      } catch (zoomErr) {
+        console.error('Failed to create Zoom meeting on accept:', zoomErr.message);
+      }
+    }
+
     const consultation = await prisma.consultation.update({
       where: { id },
       data: {
         status: newStatus,
+        meetingLink,
         consultantId: isDecline ? null : undefined, // Remove from agent's calendar
         internalNotes: isDecline && declineReason
           ? `[Agent Declined]: ${declineReason}`
@@ -143,6 +196,10 @@ const respondToConsultation = async (req, res) => {
           notes: declineReason ? `Meeting declined by agent. Reason: ${declineReason}` : 'Meeting declined by agent.'
         }
       });
+    }
+
+    if (action === 'accept') {
+      sendConsultationNotifications(consultation).catch(err => console.error('[NOTIFICATIONS] Async error:', err));
     }
 
     res.json({
@@ -220,6 +277,124 @@ const createConsultationForLead = async (req, res) => {
     res.status(500).json({ message: 'Server error creating consultation for lead', error: error.message });
   }
 };
+
+async function sendConsultationNotifications(consultation) {
+  try {
+    const lead = await prisma.lead.findUnique({
+      where: { id: consultation.leadId }
+    });
+
+    if (!lead) {
+      console.warn(`[NOTIFICATIONS] Lead not found for consultation ${consultation.id}. Skipping.`);
+      return;
+    }
+
+    const email = lead.email;
+    const phone = lead.phone;
+    const name = `${lead.firstName} ${lead.lastName}`;
+    const date = consultation.date;
+    const time = consultation.timeSlot;
+    const link = consultation.meetingLink || 'https://zoom.us';
+
+    console.log(`[NOTIFICATIONS] Dispatching scheduling notifications for Lead: ${name} (${phone} / ${email})`);
+
+    // 1. Send WhatsApp Message
+    try {
+      await sendWhatsAppMessage({
+        to: phone,
+        templateName: 'consultation_scheduled_confirmation',
+        components: [
+          {
+            type: 'body',
+            parameters: [
+              { type: 'text', text: lead.firstName },
+              { type: 'text', text: date },
+              { type: 'text', text: time },
+              { type: 'text', text: link }
+            ]
+          }
+        ]
+      });
+    } catch (waErr) {
+      console.error('[NOTIFICATIONS] Failed to send WhatsApp confirmation:', waErr.message);
+    }
+
+    // 2. Send Email
+    try {
+      const emailHtml = `
+        <h3>Spain Visa & Relocation - Assessment Consultation Scheduled</h3>
+        <p>Dear ${lead.firstName},</p>
+        <p>Your Free Eligibility Assessment and Consultation has been scheduled successfully!</p>
+        <p><strong>Appointment Details:</strong></p>
+        <ul>
+          <li><strong>Date:</strong> ${date}</li>
+          <li><strong>Time:</strong> ${time} (UTC)</li>
+          <li><strong>Duration:</strong> ${consultation.durationMinutes || 20} Minutes</li>
+        </ul>
+        <p><strong>Meeting Join Link:</strong><br/>
+           <a href="${link}" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block; margin-top: 10px;">Join Zoom Meeting</a>
+        </p>
+        <p><em>Important: If you do not join your scheduled Free Eligibility Assessment within 10 minutes of the appointment time, your booking will be automatically cancelled. Due to high demand, missed appointments are not eligible for rescheduling.</em></p>
+        <p>Thank you for choosing AAA Business Consultancy!</p>
+      `;
+      await sendEmail({
+        to: email,
+        subject: 'Spain Visa Consultation Scheduled - AAA Business Consultancy',
+        html: emailHtml
+      });
+    } catch (emailErr) {
+      console.error('[NOTIFICATIONS] Failed to send Email confirmation:', emailErr.message);
+    }
+
+    // 3. Schedule 3 Reminders (24h, 1h, 10m before)
+    if (remindersQueue && remindersQueue.add) {
+      const meetingStart = new Date(`${date}T${time.includes(':') ? time : '10:00'}`);
+      if (!isNaN(meetingStart.getTime())) {
+        const now = Date.now();
+
+        const scheduleReminder = async (label, timeBeforeMs, subject, textLabel) => {
+          const reminderTime = meetingStart.getTime() - timeBeforeMs;
+          const delay = reminderTime - now;
+          if (delay > 0) {
+            await remindersQueue.add('send-reminder', {
+              toEmail: email,
+              toPhone: phone,
+              subject: subject,
+              emailHtml: `<h3>Meeting Reminder</h3><p>Dear ${lead.firstName}, your Spain Visa Consultation is in ${textLabel}.</p><p>Zoom Join Link: <a href="${link}">${link}</a></p>`,
+              whatsappTemplate: 'consultation_scheduled_confirmation',
+              whatsappComponents: [
+                {
+                  type: 'body',
+                  parameters: [
+                    { type: 'text', text: lead.firstName },
+                    { type: 'text', text: date },
+                    { type: 'text', text: time },
+                    { type: 'text', text: link }
+                  ]
+                }
+              ]
+            }, {
+              jobId: `reminder-${label}-${consultation.id}`,
+              delay: delay
+            });
+            console.log(`[NOTIFICATIONS] Enqueued ${label} reminder with delay: ${Math.round(delay / 60000)} minutes`);
+          }
+        };
+
+        // 24 Hours Reminder (24 * 60 * 60 * 1000)
+        await scheduleReminder('24h', 24 * 60 * 60 * 1000, 'Reminder: Spain Visa Consultation in 24 Hours', '24 Hours');
+
+        // 1 Hour Reminder (1 * 60 * 60 * 1000)
+        await scheduleReminder('1h', 1 * 60 * 60 * 1000, 'Reminder: Spain Visa Consultation in 1 Hour', '1 Hour');
+
+        // 10 Minutes Reminder (10 * 60 * 1000)
+        await scheduleReminder('10m', 10 * 60 * 1000, 'Urgent Reminder: Spain Visa Consultation in 10 Minutes', '10 Minutes');
+      }
+    }
+  } catch (err) {
+    console.error('[NOTIFICATIONS] Error in sendConsultationNotifications:', err);
+  }
+}
 
 module.exports = { getConsultations, createConsultation, updateOutcome, respondToConsultation, createConsultationForLead };
 

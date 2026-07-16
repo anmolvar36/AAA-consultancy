@@ -69,6 +69,14 @@ const processPaymentEvent = async (event) => {
             }
           });
         }
+
+        // Also update Client status for Sworn Translation flow
+        if (payment.client && payment.client.serviceType === 'Spanish Sworn Translation') {
+          await tx.client.update({
+            where: { id: payment.clientId },
+            data: { status: 'Documents Under Review' }
+          });
+        }
         
         // Remove from payment drip queue if applicable (handled by queue removal logic usually)
         

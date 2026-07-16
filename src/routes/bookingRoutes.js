@@ -19,4 +19,8 @@ router.post('/eligibility', bookingLimiter, bookingController.createEligibilityB
 // Translation Upload
 router.post('/translation/upload', upload.single('document'), bookingController.uploadTranslationDocument);
 
+// Translation Checkout (disk storage)
+const uploadDisk = require('../middlewares/uploadMiddleware');
+router.post('/translation/checkout', uploadDisk.single('document'), bookingController.checkoutTranslationDocument);
+
 module.exports = router;

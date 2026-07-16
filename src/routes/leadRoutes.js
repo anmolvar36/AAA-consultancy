@@ -7,7 +7,7 @@ const {
   deleteLead,
   getLeadById, 
   updateLead, 
-  findLeadByEmail, 
+  getPublicLeadDetails, 
   updateMeetingPreference 
 } = require('../controllers/leadController');
 const { authMiddleware } = require('../middlewares/authMiddleware');
@@ -19,7 +19,7 @@ router.route('/')
   .post(createLead); // Webhook/Form doesn't need auth
 
 // Public route — no auth needed — for self-fill form
-router.get('/find-by-email', findLeadByEmail);
+router.get('/:id/public-details', getPublicLeadDetails);
 
 router.route('/:id')
   .get(authMiddleware, getLeadById)

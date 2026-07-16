@@ -58,6 +58,9 @@ const createClient = async (req, res) => {
 
     // Check if client with this email already exists
     let client = null;
+    let credentialsGenerated = false;
+    let plainPassword = '';
+
     if (email) {
       client = await prisma.client.findUnique({
         where: { email }
@@ -65,24 +68,46 @@ const createClient = async (req, res) => {
     }
 
     if (client) {
+      let updateData = {
+        firstName: firstName || client.firstName,
+        lastName: lastName || client.lastName,
+        phone: phone || client.phone,
+        nationality: nationality || client.nationality,
+        serviceType: serviceType || serviceId || client.serviceType,
+        assignedToId: finalAssignedTo || client.assignedToId,
+        packageId: packageId || client.packageId,
+        applicantsCount: applicantsCount ? String(applicantsCount) : client.applicantsCount,
+        dependentsDetails: finalDeps !== undefined && finalDeps !== null ? finalDeps : client.dependentsDetails,
+        status: status || client.status,
+        profileSummary: profileSummary || client.profileSummary
+      };
+
+      // Generate credentials if missing
+      if (!client.password) {
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%';
+        for (let i = 0; i < 8; i++) plainPassword += chars.charAt(Math.floor(Math.random() * chars.length));
+
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(plainPassword, salt);
+        updateData.password = hashedPassword;
+        updateData.isTemporaryPassword = true;
+        credentialsGenerated = true;
+      }
+
       // If it exists, update it to associate with the converted lead's details
       client = await prisma.client.update({
         where: { id: client.id },
-        data: {
-          firstName: firstName || client.firstName,
-          lastName: lastName || client.lastName,
-          phone: phone || client.phone,
-          nationality: nationality || client.nationality,
-          serviceType: serviceType || serviceId || client.serviceType,
-          assignedToId: finalAssignedTo || client.assignedToId,
-          packageId: packageId || client.packageId,
-          applicantsCount: applicantsCount ? String(applicantsCount) : client.applicantsCount,
-          dependentsDetails: finalDeps !== undefined && finalDeps !== null ? finalDeps : client.dependentsDetails,
-          status: status || client.status,
-          profileSummary: profileSummary || client.profileSummary
-        }
+        data: updateData
       });
     } else {
+      // Generate secure random password for new client
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%';
+      for (let i = 0; i < 8; i++) plainPassword += chars.charAt(Math.floor(Math.random() * chars.length));
+
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash(plainPassword, salt);
+      credentialsGenerated = true;
+
       client = await prisma.client.create({
         data: {
           firstName,
@@ -96,9 +121,67 @@ const createClient = async (req, res) => {
           applicantsCount: String(applicantsCount),
           dependentsDetails: finalDeps || undefined,
           status: status || 'Waiting for Payment',
-          profileSummary
+          profileSummary,
+          password: hashedPassword,
+          isTemporaryPassword: true
         }
       });
+    }
+
+    // Send auto welcome email with portal credentials dynamically
+    if (credentialsGenerated && client.email) {
+      const { sendEmail } = require('../services/emailService');
+      const { getCustomization } = require('./settingsController');
+      
+      const settings = getCustomization();
+      const flowSettings = settings.flowAutomationSettings || {};
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+      const portalUrl = `${frontendUrl}/#/portal/login`;
+      
+      const customSubject = flowSettings.welcomeEmailSubject || 'Welcome to AAA Business Consultancy - Your Client Portal is Ready! ✈️';
+      let customHtml = flowSettings.welcomeEmailTemplate || '';
+      
+      if (!customHtml) {
+        customHtml = `
+          <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; color: #2d3748;">
+            <div style="text-align: center; margin-bottom: 24px;">
+              <h2 style="color: #4f46e5; margin: 0;">AAA Business Consultancy</h2>
+              <p style="color: #718096; font-size: 14px; margin: 4px 0 0;">Relocation & Spain Visa Services</p>
+            </div>
+            <h3 style="color: #1a202c; border-bottom: 1px solid #edf2f7; padding-bottom: 10px;">Welcome to the Client Portal! 🎉</h3>
+            <p>Hello <strong>{client_name}</strong>,</p>
+            <p>Congratulations! Your file has been initialized. We have successfully set up your profile and created your Client Portal account.</p>
+            <p>You can now log in to select your relocation package, complete your payment, and upload your visa documents.</p>
+            <div style="background-color: #f7fafc; border-left: 4px solid #4f46e5; padding: 16px; margin: 20px 0; border-radius: 4px;">
+              <h4 style="margin: 0 0 8px; color: #4f46e5;">Access Credentials</h4>
+              <p style="margin: 4px 0;"><strong>Portal URL:</strong> <a href="{portal_url}" style="color: #4f46e5; text-decoration: underline;">Login Here</a></p>
+              <p style="margin: 4px 0;"><strong>Username:</strong> {username}</p>
+              <p style="margin: 4px 0;"><strong>Temporary Password:</strong> <code style="background-color: #edf2f7; padding: 2px 6px; border-radius: 4px; font-weight: bold; color: #e11d48;">{temp_password}</code></p>
+            </div>
+            <p style="font-size: 13px; color: #e11d48; font-weight: 600;">
+              ⚠️ Note: For your security, you will be prompted to change this temporary password immediately upon your first login.
+            </p>
+            <p>If you have any questions, feel free to contact your assigned consultant.</p>
+            <p style="font-size: 13px; color: #718096; margin-top: 30px; border-top: 1px solid #edf2f7; padding-top: 10px;">
+              This is an automated notification from AAA Visa CRM. Please do not reply directly to this email.
+            </p>
+          </div>
+        `;
+      }
+      
+      // Perform dynamic placeholders replacement
+      const clientFullName = `${client.firstName} ${client.lastName}`;
+      const renderedHtml = customHtml
+        .replace(/{client_name}/g, clientFullName)
+        .replace(/{portal_url}/g, portalUrl)
+        .replace(/{username}/g, client.email)
+        .replace(/{temp_password}/g, plainPassword);
+
+      sendEmail({
+        to: client.email,
+        subject: customSubject,
+        html: renderedHtml
+      }).catch(err => console.error('Failed to send auto welcome email:', err));
     }
 
     if (leadId) {
@@ -139,6 +222,10 @@ const selectPackage = async (req, res) => {
   try {
     const { id } = req.params;
     const { packageId, status, visaStatus } = req.body;
+
+    if (req.user.role === 'client' && req.user.id !== id) {
+      return res.status(403).json({ message: 'Access denied. You cannot select packages for other clients.' });
+    }
 
     const client = await prisma.client.update({
       where: { id },
@@ -248,6 +335,10 @@ const changeClientPassword = async (req, res) => {
   try {
     const { id } = req.params;
     const { newPassword } = req.body;
+
+    if (req.user.role === 'client' && req.user.id !== id) {
+      return res.status(403).json({ message: 'Access denied. You cannot change password for other clients.' });
+    }
     
     if (!newPassword || newPassword.length < 6) {
       return res.status(400).json({ message: 'Password must be at least 6 characters long' });
@@ -271,6 +362,10 @@ const updateClientDependents = async (req, res) => {
   try {
     const { id } = req.params;
     const { dependents } = req.body;
+
+    if (req.user.role === 'client' && req.user.id !== id) {
+      return res.status(403).json({ message: 'Access denied. You cannot modify family profiles for other clients.' });
+    }
 
     const client = await prisma.client.update({
       where: { id },

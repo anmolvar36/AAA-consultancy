@@ -2,7 +2,10 @@ const prisma = require('../config/db');
 
 const getPayments = async (req, res) => {
   try {
+    const whereClause = req.user.role === 'client' ? { clientId: req.user.id } : {};
+
     const payments = await prisma.payment.findMany({
+      where: whereClause,
       include: {
         client: { select: { firstName: true, lastName: true } }
       },
@@ -138,7 +141,7 @@ const updateRefundStatus = async (req, res) => {
 const getCommissionRates = async (req, res) => {
   try {
     const agents = await prisma.user.findMany({
-      where: { role: { in: ['admin', 'consultant', 'super_admin'] } },
+      where: { role: { in: ['admin', 'consultant', 'super_admin', 'operations', 'finance', 'marketing'] } },
       select: { id: true, commissionType: true, commissionRate: true }
     });
     

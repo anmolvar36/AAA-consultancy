@@ -327,3 +327,16 @@ model Notification {
 
   @@map("notifications")
 }
+
+model ChatSession {
+  id               String   @id @default(uuid())
+  phone            String   @unique
+  currentState     String   @default("START") // START, WAITING_FOR_VISA, WAITING_FOR_APPLICANTS, WAITING_FOR_CUSTOM_APPLICANTS, COMPLETED
+  selectedVisa     String?
+  applicantsCount  String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@map("chat_sessions")
+}
+

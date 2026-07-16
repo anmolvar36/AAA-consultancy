@@ -6,6 +6,9 @@ const webhookController = require('../controllers/webhookController');
 router.get('/meta', webhookController.verifyMetaWebhook);
 router.post('/meta', webhookController.verifyMetaSignature, webhookController.handleMetaWebhook);
 
+// Twilio WhatsApp Webhook
+router.post('/twilio', webhookController.handleTwilioWebhook);
+
 // Stripe (Needs raw body for signature validation)
 router.post('/stripe', express.raw({ type: 'application/json' }), webhookController.handleStripeWebhook);
 

@@ -211,6 +211,47 @@ const updateClientStatus = async (req, res) => {
       where: { id },
       data
     });
+
+    // Check if status is set to Completed or Delivered for Sworn Translation client
+    if ((status === 'Completed' || status === 'Delivered') && client.serviceType === 'Spanish Sworn Translation' && client.email) {
+      try {
+        const { sendEmail } = require('../services/emailService');
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+        const portalUrl = `${frontendUrl}/#/portal/login`;
+        
+        const subject = 'Your Sworn Translation is Completed! 🇪🇸';
+        const html = `
+          <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; color: #2d3748;">
+            <div style="text-align: center; margin-bottom: 24px;">
+              <h2 style="color: #4f46e5; margin: 0;">AAA Business Consultancy</h2>
+              <p style="color: #718096; font-size: 14px; margin: 4px 0 0;">Relocation & Spain Visa Services</p>
+            </div>
+            <h3 style="color: #10b981; border-bottom: 1px solid #edf2f7; padding-bottom: 10px;">Translation Completed Successfully! 🎉</h3>
+            <p>Hello <strong>${client.firstName} ${client.lastName}</strong>,</p>
+            <p>We are pleased to inform you that your documents have been successfully translated by our certified Spanish sworn translators.</p>
+            <p>You can now log in to your Client Portal to view and download your certified translation PDF files.</p>
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="${portalUrl}" style="background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
+                Log In to Portal
+              </a>
+            </div>
+            <p>If you have any questions or need further assistance, please contact your Case Officer.</p>
+            <p style="font-size: 13px; color: #718096; margin-top: 30px; border-top: 1px solid #edf2f7; padding-top: 10px;">
+              This is an automated notification from AAA Visa CRM. Please do not reply directly to this email.
+            </p>
+          </div>
+        `;
+        
+        await sendEmail({
+          to: client.email,
+          subject,
+          html
+        });
+        console.log(`Auto success notification email sent to Sworn Translation client: ${client.email}`);
+      } catch (mailErr) {
+        console.error('Failed to send sworn translation success notification email:', mailErr);
+      }
+    }
     
     res.json(client);
   } catch (error) {
@@ -287,6 +328,32 @@ const generateCredentials = async (req, res) => {
   }
 };
 
+const getClientProfile = async (req, res) => {
+  try {
+    if (req.user.role !== 'client') {
+      return res.status(403).json({ message: 'Access denied.' });
+    }
+
+    const client = await prisma.client.findUnique({
+      where: { id: req.user.id }
+    });
+
+    if (!client) {
+      return res.status(404).json({ message: 'Client not found.' });
+    }
+
+    res.json({
+      ...client,
+      name: `${client.firstName} ${client.lastName}`,
+      serviceId: client.serviceType,
+      hasCredentials: !!client.password
+    });
+  } catch (error) {
+    console.error('Error fetching client profile:', error);
+    res.status(500).json({ message: 'Server error fetching client profile' });
+  }
+};
+
 const clientLogin = async (req, res) => {
   try {
     const { clientId, password } = req.body;
@@ -323,6 +390,7 @@ const clientLogin = async (req, res) => {
         firstName: client.firstName,
         lastName: client.lastName,
         email: client.email,
+        serviceType: client.serviceType,
         isTemporaryPassword: client.isTemporaryPassword
       }
     });
@@ -389,5 +457,6 @@ module.exports = {
   generateCredentials, 
   clientLogin, 
   changeClientPassword,
-  updateClientDependents
+  updateClientDependents,
+  getClientProfile
 };

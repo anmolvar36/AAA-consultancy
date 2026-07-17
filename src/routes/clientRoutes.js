@@ -1,5 +1,5 @@
 const express = require('express');
-const { getClients, createClient, updateClientStatus, selectPackage, generateCredentials, clientLogin, changeClientPassword, updateClientDependents } = require('../controllers/clientController');
+const { getClients, createClient, updateClientStatus, selectPackage, generateCredentials, clientLogin, changeClientPassword, updateClientDependents, getClientProfile } = require('../controllers/clientController');
 
 const { authMiddleware, rbacMiddleware } = require('../middlewares/authMiddleware');
 
@@ -10,6 +10,7 @@ router.route('/')
   .post(authMiddleware, rbacMiddleware(['super_admin', 'admin', 'operations', 'consultant']), createClient);
 
 router.post('/login', clientLogin);
+router.get('/profile/me', authMiddleware, getClientProfile);
 router.post('/:id/credentials', authMiddleware, rbacMiddleware(['super_admin', 'admin', 'operations', 'consultant']), generateCredentials);
 router.put('/:id/change-password', authMiddleware, changeClientPassword);
 router.patch('/:id/status', authMiddleware, rbacMiddleware(['super_admin', 'admin', 'operations', 'consultant']), updateClientStatus);

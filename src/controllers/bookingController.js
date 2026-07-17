@@ -195,7 +195,7 @@ exports.createEligibilityBooking = async (req, res) => {
               <li><strong>Duration:</strong> 20 Minutes</li>
             </ul>
             <p><strong>Meeting Join Link:</strong><br/>
-               <a href="${link}" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block; margin-top: 10px;">Join Zoom Meeting</a>
+               <em>The Zoom meeting join link will be shared with you shortly via email once a consultant is confirmed. Please stay tuned and join the meeting on time.</em>
             </p>
             <p><em>Important: If you do not join your scheduled Free Eligibility Assessment within 10 minutes of the appointment time, your booking will be automatically cancelled. Due to high demand, missed appointments are not eligible for rescheduling.</em></p>
             <p>Thank you for choosing AAA Business Consultancy!</p>
@@ -266,6 +266,25 @@ exports.createEligibilityBooking = async (req, res) => {
   }
 };
 
+function getTranslationRate(sourceLanguage) {
+  const lang = (sourceLanguage || 'English').toLowerCase().trim();
+  if (lang.includes('arabic')) {
+    return 0.25;
+  }
+  if (lang.includes('urdu')) {
+    return 0.40;
+  }
+  // Default (English)
+  return 0.15;
+}
+
+function calculateSwornTranslationPrice(wordCount, sourceLanguage) {
+  const rate = getTranslationRate(sourceLanguage);
+  const subtotal = wordCount * rate;
+  const vat = subtotal * 0.05;
+  return parseFloat((subtotal + vat).toFixed(2));
+}
+
 exports.uploadTranslationDocument = async (req, res) => {
   try {
     if (!req.file) {
@@ -276,19 +295,16 @@ exports.uploadTranslationDocument = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Only PDF files are supported' });
     }
 
-    // Parse PDF
-    const parser = new PDFParse({ data: req.file.buffer });
+    // Parse PDF using PDFParse class (correct API: pass data + verbosity in constructor, then call getText())
+    const parser = new PDFParse({ data: req.file.buffer, verbosity: 0 });
     const result = await parser.getText();
-    const text = result.pages.map(p => p.text).join('\n');
+    const text = (result.pages || []).map(p => p.text || '').join('\n');
     
     // Count words (naive whitespace split)
     const wordCount = text.trim().split(/\s+/).filter(word => word.length > 0).length;
 
-    // Fetch settings for dynamic pricing
-    let settings = await prisma.companySetting.findFirst();
-    let rates = settings?.swornTranslationRates || { perWord: 0.10, baseFee: 20 };
-    
-    const calculatedPrice = (wordCount * rates.perWord) + rates.baseFee;
+    const sourceLanguage = req.body.sourceLanguage || 'English';
+    const calculatedPrice = calculateSwornTranslationPrice(wordCount, sourceLanguage);
 
     return res.status(200).json({
       success: true,
@@ -351,22 +367,35 @@ exports.checkoutTranslationDocument = async (req, res) => {
           serviceType: 'Spanish Sworn Translation',
           password: hashedPassword,
           isTemporaryPassword: true,
-          status: 'Documents Under Review'
+          status: 'Documents Under Review',
+          sourceLanguage: sourceLanguage || 'English',
+          targetLanguage: targetLanguage || 'Spanish',
+          wordCount: parseInt(wordCount, 10) || 0
         }
       });
     } else {
       client = await prisma.client.update({
         where: { id: client.id },
-        data: { status: 'Documents Under Review' }
+        data: { 
+          status: 'Documents Under Review',
+          sourceLanguage: sourceLanguage || undefined,
+          targetLanguage: targetLanguage || undefined,
+          wordCount: wordCount ? parseInt(wordCount, 10) : undefined
+        }
       });
     }
 
     // 2. Save Document record
-    const document = await prisma.document.create({
+    let category = req.body.category || 'Translation Input';
+    if (category.startsWith('Other: ')) {
+      category = category.replace('Other: ', '');
+    }
+
+    await prisma.document.create({
       data: {
         clientId: client.id,
         name: req.file.originalname,
-        category: 'Translation Input',
+        category: category,
         url: `/uploads/${req.file.filename}`,
         size: `${(req.file.size / 1024 / 1024).toFixed(2)} MB`,
         status: 'Pending Verification',
@@ -384,25 +413,69 @@ exports.checkoutTranslationDocument = async (req, res) => {
     });
 
     // 4. Create Payment Record
+    const finalPrice = calculateSwornTranslationPrice(Number(wordCount) || 0, sourceLanguage || 'English');
+    
+    // Check if Stripe is configured
+    const stripeSecret = process.env.STRIPE_SECRET_KEY;
+    const isRealStripe = stripeSecret && !stripeSecret.includes('your_stripe');
+
     const payment = await prisma.payment.create({
       data: {
         clientId: client.id,
         applicationId: applicationCycle.id,
-        amount: Number(estimatedPrice) || 0,
-        totalPaid: Number(estimatedPrice) || 0,
-        status: 'Paid',
-        paymentMethod: 'Stripe Mock Auto',
+        amount: finalPrice,
+        totalPaid: isRealStripe ? 0 : finalPrice, // 0 paid initially for real Stripe
+        status: isRealStripe ? 'Pending' : 'Paid',
+        paymentMethod: isRealStripe ? 'Stripe' : 'Stripe Mock Auto',
         dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
       }
     });
 
+<<<<<<< HEAD
+    let paymentUrl = `http://localhost:5173/#/portal/login?success=true&clientId=${client.id}&tempPassword=${generatedPassword || 'Pre-existing'}`;
+    let gatewayId = `sess_${payment.id}`;
+=======
     // 5. Generate Stripe Mock Link (Direct portal redirect for local testing)
-    const paymentUrl = `http://localhost:5173/#/portal/login?success=true&clientId=${client.id}&tempPassword=${generatedPassword || 'Pre-existing'}`;
+    const frontendUrl = process.env.FRONTEND_URL || req.headers.origin || 'http://localhost:5173';
+    const paymentUrl = `${frontendUrl}/#/portal/login?success=true&clientId=${client.id}&tempPassword=${generatedPassword || 'Pre-existing'}`;
+>>>>>>> e2cb8920fa744a51c4928e0bf04d38780b0991c6
 
-    // Update payment record with mock gateway details
+    if (isRealStripe) {
+      try {
+        const stripe = require('stripe')(stripeSecret);
+        const session = await stripe.checkout.sessions.create({
+          payment_method_types: ['card'],
+          line_items: [{
+            price_data: {
+              currency: 'eur',
+              product_data: {
+                name: 'Spanish Sworn Translation Certification',
+                description: `Sworn translation of documents. Source: ${sourceLanguage || 'English'}. Words: ${wordCount || 0}. (5% VAT Included)`,
+              },
+              unit_amount: Math.round(finalPrice * 100), // finalPrice already includes 5% VAT
+            },
+            quantity: 1,
+          }],
+          mode: 'payment',
+          success_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/portal/login?success=true&clientId=${client.id}&tempPassword=${generatedPassword || 'Pre-existing'}&session_id={CHECKOUT_SESSION_ID}`,
+          cancel_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/public/translation?cancel=true`,
+          metadata: {
+            clientId: client.id,
+            paymentId: payment.id,
+            serviceType: 'sworn_translation'
+          }
+        });
+        paymentUrl = session.url;
+        gatewayId = session.id;
+      } catch (stripeErr) {
+        console.error('Failed to create Stripe Session for Translation Checkout:', stripeErr);
+      }
+    }
+
+    // Update payment record with gateway details
     await prisma.payment.update({
       where: { id: payment.id },
-      data: { gatewayId: `sess_${payment.id}` }
+      data: { gatewayId }
     });
 
     return res.status(201).json({

@@ -141,70 +141,23 @@ exports.verifyMetaWebhook = (req, res) => {
 };
 
 /**
- * Background worker logic to download a Zoom cloud recording, upload it to AWS S3,
+ * Background worker logic to extract Zoom cloud recording share link
  * and link it to the matching Consultation in the database.
  */
 async function processZoomRecording(payload) {
   const meetingId = payload.object.id;
-  const recordingFiles = payload.object.recording_files;
   
-  if (!recordingFiles || recordingFiles.length === 0) {
-    console.log(`No recording files found for Zoom meeting ${meetingId}`);
+  // Extract Zoom Cloud Share URL or fallback to the play URL of the first file
+  const shareUrl = payload.object.share_url || payload.object.recording_files?.[0]?.play_url;
+  
+  if (!shareUrl) {
+    console.warn(`No share_url or play_url found for Zoom meeting ${meetingId}`);
     return;
   }
   
-  // Look for MP4 video file or fall back to the first available file
-  const videoFile = recordingFiles.find(f => f.file_type === 'MP4') || recordingFiles[0];
-  const downloadUrl = videoFile.download_url;
-  
-  console.log(`Starting download for Zoom meeting ${meetingId} recording from ${downloadUrl}`);
-  
-  const tempDir = path.join(__dirname, '../../uploads');
-  if (!fs.existsSync(tempDir)) {
-    fs.mkdirSync(tempDir, { recursive: true });
-  }
-  
-  const tempFileName = `zoom-recording-${meetingId}-${Date.now()}.mp4`;
-  const tempFilePath = path.join(tempDir, tempFileName);
-  
-  let zoomToken = null;
-  try {
-    if (zoomService.isConfigured) {
-      zoomToken = await zoomService.getZoomAccessToken();
-    }
-  } catch (e) {
-    console.warn('Could not retrieve Zoom access token for download authorization, trying public download:', e.message);
-  }
+  console.log(`Received Zoom recording share URL for meeting ${meetingId}: ${shareUrl}`);
   
   try {
-    const response = await axios({
-      method: 'GET',
-      url: downloadUrl,
-      responseType: 'stream',
-      headers: zoomToken ? { 'Authorization': `Bearer ${zoomToken}` } : {}
-    });
-    
-    const writer = fs.createWriteStream(tempFilePath);
-    response.data.pipe(writer);
-    
-    await new Promise((resolve, reject) => {
-      writer.on('finish', resolve);
-      writer.on('error', reject);
-    });
-    
-    console.log(`Successfully downloaded Zoom recording for meeting ${meetingId} to ${tempFilePath}`);
-    
-    // Upload to AWS S3
-    const s3Key = `recordings/${meetingId}-${Date.now()}.mp4`;
-    const bucketName = process.env.AWS_BUCKET_NAME || 'aaa-consultancy-recordings';
-    const region = process.env.AWS_REGION || 'eu-west-1';
-    
-    console.log(`Uploading local file to S3: ${bucketName}/${s3Key}`);
-    await s3Service.uploadLocalFileToS3(tempFilePath, s3Key, 'video/mp4');
-    
-    const s3Url = `https://${bucketName}.s3.${region}.amazonaws.com/${s3Key}`;
-    console.log(`S3 Upload Successful. URL: ${s3Url}`);
-    
     // Update matching Consultation record in database
     const consultation = await prisma.consultation.findFirst({
       where: {
@@ -219,7 +172,7 @@ async function processZoomRecording(payload) {
       await prisma.consultation.update({
         where: { id: consultation.id },
         data: {
-          recordingUrl: s3Url,
+          recordingUrl: shareUrl,
           status: 'Completed'
         }
       });
@@ -227,17 +180,7 @@ async function processZoomRecording(payload) {
       console.warn(`No Consultation record found matching Zoom Meeting ID ${meetingId}`);
     }
   } catch (err) {
-    console.error(`Error processing Zoom recording download/upload for meeting ${meetingId}:`, err.message);
-  } finally {
-    // Delete local temp file
-    if (fs.existsSync(tempFilePath)) {
-      try {
-        fs.unlinkSync(tempFilePath);
-        console.log(`Deleted temp local recording file: ${tempFilePath}`);
-      } catch (err) {
-        console.error(`Failed to delete temp file ${tempFilePath}:`, err.message);
-      }
-    }
+    console.error(`Error saving Zoom recording link for meeting ${meetingId}:`, err.message);
   }
 }
 

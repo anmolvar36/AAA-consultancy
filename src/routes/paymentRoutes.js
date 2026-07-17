@@ -8,7 +8,9 @@ const {
   updateRefundStatus,
   getCommissionRates,
   updateCommissionRate,
-  getCommissionsReport
+  getCommissionsReport,
+  createStripeCheckoutSession,
+  verifyStripeCheckoutSession
 } = require('../controllers/paymentController');
 const { authMiddleware } = require('../middlewares/authMiddleware');
 
@@ -19,6 +21,8 @@ router.route('/')
 
 router.post('/generate-link', authMiddleware, generatePaymentLink);
 router.patch('/:id/status', authMiddleware, updatePaymentStatus);
+router.post('/create-checkout-session', authMiddleware, createStripeCheckoutSession);
+router.post('/verify-checkout-session', authMiddleware, verifyStripeCheckoutSession);
 
 // Refunds
 router.get('/refunds', authMiddleware, getRefundRequests);

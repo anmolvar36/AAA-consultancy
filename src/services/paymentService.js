@@ -70,11 +70,18 @@ const processPaymentEvent = async (event) => {
           });
         }
 
-        // Also update Client status for Sworn Translation flow
-        if (payment.client && payment.client.serviceType === 'Spanish Sworn Translation') {
+        // Also update Client status and package details
+        if (payment.client) {
+          const isTranslation = (payment.client.serviceType || '').includes('Translation') || (payment.client.serviceId || '').includes('translation');
+          const packageId = session.metadata?.packageId;
           await tx.client.update({
             where: { id: payment.clientId },
-            data: { status: 'Documents Under Review' }
+            data: {
+              documentUploadAllowed: true,
+              packageId: packageId || undefined,
+              status: isTranslation ? 'Documents Under Review' : 'Payment Received',
+              visaStatus: isTranslation ? 'Not Started' : 'Document Preparation'
+            }
           });
         }
         

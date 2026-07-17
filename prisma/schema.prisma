@@ -94,6 +94,10 @@ model Client {
   profileSummary   String?  @db.Text
   dependentsDetails Json?
   
+  sourceLanguage    String?
+  targetLanguage    String?
+  wordCount         Int?
+  
   deviceFingerprint String?
   isBlocked         Boolean  @default(false)
 
@@ -196,6 +200,7 @@ model Document {
   name             String
   category         String
   url              String
+  translatedUrl    String?  // URL to download translated PDF
   size             String?
   status           String   @default("Pending Verification") // VERIFIED, REJECTED
   comment          String?  @db.Text

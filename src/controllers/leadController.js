@@ -42,7 +42,8 @@ const createLead = async (req, res) => {
       meetingPreferredDate,
       meetingPreferredTime,
       meetingPreferredLanguage,
-      meetingNotes
+      meetingNotes,
+      qualificationData
     } = req.body;
     
     // Normalize phone number to check for existing lead (last 10 digits to match with or without country code)
@@ -86,6 +87,7 @@ const createLead = async (req, res) => {
           meetingPreferredTime,
           meetingPreferredLanguage,
           meetingNotes,
+          qualificationData: qualificationData || undefined,
           assignedToId,
           formSubmittedAt: meetingPreferredDate ? new Date() : undefined,
           status: meetingPreferredDate ? 'Form Submitted' : 'New Lead'
@@ -280,7 +282,10 @@ async function updateMeetingPreference(req, res) {
       meetingPreferredDate,
       meetingPreferredTime,
       meetingPreferredLanguage,
-      meetingNotes
+      meetingNotes,
+      qualificationData,
+      serviceType,
+      serviceId
     } = req.body;
 
     const lead = await prisma.lead.update({
@@ -295,6 +300,8 @@ async function updateMeetingPreference(req, res) {
         meetingPreferredTime,
         meetingPreferredLanguage,
         meetingNotes,
+        qualificationData: qualificationData || undefined,
+        serviceType: serviceType || serviceId || undefined,
         formSubmittedAt: new Date(),
         status: 'Form Submitted'
       }
@@ -449,7 +456,7 @@ async function syncLeadConsultation(leadId) {
             <p style="margin: 4px 0;"><strong>Date:</strong> ${date}</p>
             <p style="margin: 4px 0;"><strong>Preferred Time Slot:</strong> ${time}</p>
             <p style="margin: 4px 0;"><strong>Language:</strong> ${lead.meetingPreferredLanguage || lead.preferredLanguage || 'English'}</p>
-            <p style="margin: 4px 0;"><strong>Meeting Link:</strong> <a href="${meetingLink}" style="color: #4f46e5; text-decoration: underline;">Join Zoom Call</a></p>
+            <p style="margin: 4px 0;"><strong>Meeting Link:</strong> <em>The Zoom meeting link will be shared shortly via email once the assigned consultant accepts. Please join on time.</em></p>
           </div>
           
           <p>A Spain Visa expert has been assigned to your case and will meet you online at the scheduled time.</p>

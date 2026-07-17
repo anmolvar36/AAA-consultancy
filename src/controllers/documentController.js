@@ -92,4 +92,52 @@ const reviewDocument = async (req, res) => {
   }
 };
 
-module.exports = { getDocuments, uploadDocument, reviewDocument };
+const uploadTranslatedDocument = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'No file uploaded' });
+    }
+
+    const { id } = req.params;
+
+    // 1. Update the document with translated url and status
+    const document = await prisma.document.update({
+      where: { id },
+      data: {
+        translatedUrl: `/uploads/${req.file.filename}`,
+        status: 'Translated'
+      },
+      include: {
+        client: true
+      }
+    });
+
+    // 2. Trigger email to client notifying them that translation is ready
+    if (document.client && document.client.email) {
+      const { sendEmail } = require('../services/emailService');
+      try {
+        await sendEmail({
+          to: document.client.email,
+          subject: 'Your Certified Sworn Translation is Ready! 🇪🇸',
+          html: `
+            <h3>Dear ${document.client.firstName},</h3>
+            <p>We are pleased to inform you that the sworn translation of your document (<b>${document.name}</b>) is complete and ready.</p>
+            <p>You can now download the certified PDF directly from your Client Portal dashboard.</p>
+            <p><a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/portal/login">Log in to Client Portal</a></p>
+            <br/>
+            <p>Best regards,<br/>AAA Business Consultancy Team</p>
+          `
+        });
+      } catch (emailErr) {
+        console.error('Failed to send email notification:', emailErr);
+      }
+    }
+
+    res.json({ success: true, document });
+  } catch (error) {
+    console.error('Error uploading translated document:', error);
+    res.status(500).json({ message: 'Server error uploading translated document' });
+  }
+};
+
+module.exports = { getDocuments, uploadDocument, reviewDocument, uploadTranslatedDocument };

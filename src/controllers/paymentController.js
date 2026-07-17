@@ -1,4 +1,7 @@
 const prisma = require('../config/db');
+const stripe = process.env.STRIPE_SECRET_KEY && !process.env.STRIPE_SECRET_KEY.includes('your_stripe') 
+  ? require('stripe')(process.env.STRIPE_SECRET_KEY) 
+  : null;
 
 const getPayments = async (req, res) => {
   try {
@@ -218,6 +221,150 @@ const getCommissionsReport = async (req, res) => {
     res.status(500).json({ message: 'Server error fetching commissions report' });
   }
 };
+const createStripeCheckoutSession = async (req, res) => {
+  try {
+    const { packageId, amount, discount } = req.body;
+    const clientId = req.user.id;
+
+    if (!clientId) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+
+    // 1. Create a Pending payment record in the database first
+    const payment = await prisma.payment.create({
+      data: {
+        clientId,
+        amount: Number(amount) || 0,
+        discount: Number(discount) || 0,
+        status: 'Pending',
+        dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
+      }
+    });
+
+    // 2. Build Stripe session parameters or fallback to mock
+    if (!stripe) {
+      console.warn('Stripe is not configured. Simulating successful checkout.');
+      // Auto success in mock mode
+      await prisma.payment.update({
+        where: { id: payment.id },
+        data: {
+          status: 'Paid',
+          paymentMethod: 'Mock Auto',
+          totalPaid: Number(amount) || 0,
+          transactionId: `TXN_MOCK_${payment.id}`
+        }
+      });
+      await prisma.client.update({
+        where: { id: clientId },
+        data: {
+          packageId: packageId || undefined,
+          documentUploadAllowed: true,
+          status: 'Payment Received',
+          visaStatus: 'Document Preparation'
+        }
+      });
+
+      return res.status(200).json({
+        success: true,
+        isMock: true,
+        url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/portal/documents/${clientId}?session_id=mock_session_id&success=true`
+      });
+    }
+
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: [{
+        price_data: {
+          currency: 'eur',
+          product_data: {
+            name: `Spain Relocation Package - ${packageId.toUpperCase()}`,
+            description: `Certified Spain visa relocation & administrative services support`,
+          },
+          unit_amount: Math.round(Number(amount) * 1.05 * 100), // + 5% VAT included
+        },
+        quantity: 1,
+      }],
+      mode: 'payment',
+      success_url: `${frontendUrl}/#/portal/documents/${clientId}?session_id={CHECKOUT_SESSION_ID}&success=true`,
+      cancel_url: `${frontendUrl}/#/portal/documents/${clientId}?cancel=true`,
+      metadata: {
+        clientId,
+        paymentId: payment.id,
+        packageId,
+        amount: String(amount),
+        discount: String(discount)
+      }
+    });
+
+    // 3. Update payment record with the Stripe session ID (gatewayId)
+    await prisma.payment.update({
+      where: { id: payment.id },
+      data: { gatewayId: session.id }
+    });
+
+    res.status(200).json({
+      success: true,
+      url: session.url
+    });
+
+  } catch (error) {
+    console.error('Error creating Stripe session:', error);
+    res.status(500).json({ success: false, message: 'Server error creating payment session' });
+  }
+};
+
+const verifyStripeCheckoutSession = async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+
+    if (!stripe) {
+      return res.status(200).json({ success: true, message: 'Mock payment verified successfully.' });
+    }
+
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+    if (session.payment_status === 'paid') {
+      const paymentId = session.metadata?.paymentId;
+      const clientId = session.metadata?.clientId;
+      const packageId = session.metadata?.packageId;
+
+      if (paymentId) {
+        const payment = await prisma.payment.findUnique({ where: { id: paymentId } });
+        if (payment && payment.status !== 'Paid') {
+          await prisma.payment.update({
+            where: { id: paymentId },
+            data: {
+              status: 'Paid',
+              transactionId: session.id,
+              paymentMethod: 'Stripe',
+              totalPaid: session.amount_total / 100
+            }
+          });
+
+          await prisma.client.update({
+            where: { id: clientId },
+            data: {
+              packageId: packageId || undefined,
+              documentUploadAllowed: true,
+              status: 'Payment Received',
+              visaStatus: 'Document Preparation'
+            }
+          });
+        }
+      }
+
+      return res.status(200).json({ success: true, message: 'Payment successfully verified!' });
+    }
+
+    return res.status(400).json({ success: false, message: 'Payment not completed.' });
+
+  } catch (error) {
+    console.error('Error verifying Stripe session:', error);
+    res.status(500).json({ success: false, message: 'Server error verifying payment session' });
+  }
+};
+
 module.exports = { 
   getPayments, 
   generatePaymentLink, 
@@ -227,5 +374,7 @@ module.exports = {
   updateRefundStatus,
   getCommissionRates,
   updateCommissionRate,
-  getCommissionsReport
+  getCommissionsReport,
+  createStripeCheckoutSession,
+  verifyStripeCheckoutSession
 };

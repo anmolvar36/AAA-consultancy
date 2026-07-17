@@ -77,7 +77,7 @@ exports.createEligibilityBooking = async (req, res) => {
     }
 
     // 4. Create Lead (if doesn't exist for UI compatibility)
-    let lead = await prisma.lead.findUnique({ where: { clientId: client.id }});
+    let lead = await prisma.lead.findUnique({ where: { clientId: client.id } });
     if (!lead) {
       lead = await prisma.lead.create({
         data: {
@@ -142,7 +142,7 @@ exports.createEligibilityBooking = async (req, res) => {
 
     // Schedule NO-SHOW enforcer precisely at meetingStart + 10 mins
     const delay = tenMinsAfterStart.getTime() - Date.now();
-    
+
     if (delay > 0) {
       await noShowEnforcerQueue.add('enforce-no-show', {
         consultationId: consultation.id,
@@ -299,7 +299,7 @@ exports.uploadTranslationDocument = async (req, res) => {
     const parser = new PDFParse({ data: req.file.buffer, verbosity: 0 });
     const result = await parser.getText();
     const text = (result.pages || []).map(p => p.text || '').join('\n');
-    
+
     // Count words (naive whitespace split)
     const wordCount = text.trim().split(/\s+/).filter(word => word.length > 0).length;
 
@@ -376,7 +376,7 @@ exports.checkoutTranslationDocument = async (req, res) => {
     } else {
       client = await prisma.client.update({
         where: { id: client.id },
-        data: { 
+        data: {
           status: 'Documents Under Review',
           sourceLanguage: sourceLanguage || undefined,
           targetLanguage: targetLanguage || undefined,
@@ -414,7 +414,7 @@ exports.checkoutTranslationDocument = async (req, res) => {
 
     // 4. Create Payment Record
     const finalPrice = calculateSwornTranslationPrice(Number(wordCount) || 0, sourceLanguage || 'English');
-    
+
     // Check if Stripe is configured
     const stripeSecret = process.env.STRIPE_SECRET_KEY;
     const isRealStripe = stripeSecret && !stripeSecret.includes('your_stripe');
@@ -431,14 +431,9 @@ exports.checkoutTranslationDocument = async (req, res) => {
       }
     });
 
-<<<<<<< HEAD
-    let paymentUrl = `http://localhost:5173/#/portal/login?success=true&clientId=${client.id}&tempPassword=${generatedPassword || 'Pre-existing'}`;
-    let gatewayId = `sess_${payment.id}`;
-=======
     // 5. Generate Stripe Mock Link (Direct portal redirect for local testing)
     const frontendUrl = process.env.FRONTEND_URL || req.headers.origin || 'http://localhost:5173';
     const paymentUrl = `${frontendUrl}/#/portal/login?success=true&clientId=${client.id}&tempPassword=${generatedPassword || 'Pre-existing'}`;
->>>>>>> e2cb8920fa744a51c4928e0bf04d38780b0991c6
 
     if (isRealStripe) {
       try {

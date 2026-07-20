@@ -6,7 +6,8 @@ const getClients = async (req, res) => {
   try {
     const clients = await prisma.client.findMany({
       include: {
-        assignedTo: { select: { fullName: true } }
+        assignedTo: { select: { fullName: true } },
+        applicationCycles: true
       },
       orderBy: { createdAt: 'desc' }
     });
@@ -212,6 +213,48 @@ const updateClientStatus = async (req, res) => {
       data
     });
 
+    // Check if status is set to Additional Documents Required
+    if (status === 'Additional Documents Required') {
+      try {
+        const { sendEmail } = require('../services/emailService');
+        const { sendCustomWhatsApp } = require('../services/chatbotService');
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+        const portalUrl = `${frontendUrl}/#/portal/login`;
+        const clientName = `${client.firstName} ${client.lastName}`;
+
+        // 1. Send Email
+        if (client.email) {
+          await sendEmail({
+            to: client.email,
+            subject: 'Action Required: Additional Documents Needed for Spain Visa 🇪🇸',
+            html: `
+              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #ddd; padding: 20px; border-radius: 8px;">
+                <h2 style="color: #d97706; text-align: center;">Action Required</h2>
+                <p>Hello <b>${clientName}</b>,</p>
+                <p>Our verification team has reviewed your documents and found that some details or additional files are required to proceed with your Spain Visa / Relocation application.</p>
+                <div style="background-color: #fffbeb; border: 1px solid #fef3c7; padding: 15px; border-radius: 6px; margin: 15px 0; color: #b45309;">
+                  <strong>Please log in to your client portal to check the requested documents and upload them as soon as possible.</strong>
+                </div>
+                <p>Access your portal here: <a href="${portalUrl}" style="color: #4f46e5; font-weight: bold;">Client Portal Login</a></p>
+                <br>
+                <p>Best regards,</p>
+                <p><b>AAA Business Consultancy Team</b></p>
+              </div>
+            `
+          });
+        }
+
+        // 2. Send WhatsApp
+        if (client.phone) {
+          const waMsg = `🔔 *Action Required: Additional Documents Needed*\n\nHello *${clientName}*,\n\nOur team requires additional documents to proceed with your Spain Visa / Relocation application.\n\nPlease log in to your client portal to view the request and upload the required files:\n\n🔗 ${portalUrl}`;
+          await sendCustomWhatsApp(client.phone, waMsg);
+        }
+        console.log(`[Auto-Notification] Sent Additional Documents Required alert to ${client.email}`);
+      } catch (err) {
+        console.error('[Auto-Notification] Failed to send Additional Documents alert:', err.message);
+      }
+    }
+
     // Check if status is set to Completed or Delivered for Sworn Translation client
     if ((status === 'Completed' || status === 'Delivered') && client.serviceType === 'Spanish Sworn Translation' && client.email) {
       try {
@@ -250,6 +293,41 @@ const updateClientStatus = async (req, res) => {
         console.log(`Auto success notification email sent to Sworn Translation client: ${client.email}`);
       } catch (mailErr) {
         console.error('Failed to send sworn translation success notification email:', mailErr);
+      }
+    }
+    // Check if visaStatus changed to 'Visa Refused'
+    if (visaStatus === 'Visa Refused') {
+      try {
+        // Find total payments made by this client
+        const payments = await prisma.payment.findMany({
+          where: { clientId: id, status: 'Paid' }
+        });
+        const totalAmountPaid = payments.reduce((acc, p) => acc + (p.amount || 0), 0);
+        
+        let refundAmount = 0;
+        let isEligible = false;
+        
+        const serviceLower = (client.serviceType || '').toLowerCase();
+        if (serviceLower.includes('dnv') || serviceLower.includes('digital nomad') || serviceLower.includes('nlv') || serviceLower.includes('non-lucrative')) {
+          refundAmount = parseFloat((totalAmountPaid * 0.5).toFixed(2));
+          isEligible = true;
+        } else {
+          refundAmount = 0;
+          isEligible = false;
+        }
+
+        console.log(`[Refund Automation] Visa Refused for client ${client.email}. Total paid: €${totalAmountPaid}. Refund calculated: €${refundAmount}.`);
+        
+        await prisma.refundRequest.create({
+          data: {
+            clientId: id,
+            amount: refundAmount,
+            status: isEligible ? 'Pending Review' : 'Rejected',
+            reason: `Automated refund trigger: Visa status updated to Visa Refused. Service: ${client.serviceType}. Total paid: €${totalAmountPaid}. Eligibility matching 50% refund policy: ${isEligible ? 'Eligible' : 'Not Eligible'}.`
+          }
+        });
+      } catch (err) {
+        console.error('Failed to auto-trigger refund request calculation:', err.message);
       }
     }
     

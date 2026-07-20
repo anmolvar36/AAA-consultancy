@@ -31,6 +31,7 @@ const getAgents = async (req, res) => {
         commissionRate: true,
         immigrationBio: true,
         customPermissions: true,
+        avatar: true,
         createdAt: true
       }
     });
@@ -42,7 +43,7 @@ const getAgents = async (req, res) => {
       languages: a.spokenLanguages,
       bio: a.immigrationBio,
       casesCount: 0,
-      avatar: 'https://i.pravatar.cc/150?u=' + a.id
+      avatar: a.avatar || null
     }));
     res.json(mappedAgents);
   } catch (error) {

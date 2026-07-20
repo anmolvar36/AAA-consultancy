@@ -26,7 +26,7 @@ const getLeads = async (req, res) => {
 
 const createLead = async (req, res) => {
   try {
-    const { 
+    const {
       firstName, 
       lastName, 
       email, 
@@ -43,12 +43,38 @@ const createLead = async (req, res) => {
       meetingPreferredTime,
       meetingPreferredLanguage,
       meetingNotes,
-      qualificationData
+      qualificationData,
+      preferableArea,
+      budget,
+      sourceLanguage,
+      targetLanguage,
+      wordCount
     } = req.body;
     
     // Normalize phone number to check for existing lead (last 10 digits to match with or without country code)
     const cleanPhone = phone ? phone.replace(/\D/g, '') : '';
     const matchDigits = cleanPhone.length >= 10 ? cleanPhone.slice(-10) : cleanPhone;
+
+    // Check blacklist first
+    const blacklisted = await prisma.blacklistedClient.findFirst({
+      where: {
+        OR: [
+          { email: email.toLowerCase() },
+          ...(matchDigits ? [{ phone: { contains: matchDigits } }] : [])
+        ]
+      }
+    });
+
+    const { isNameSimilar } = require('../utils/fuzzyMatch');
+    const blacklist = await prisma.blacklistedClient.findMany();
+    const fullNameInput = `${firstName || ''} ${lastName || ''}`.trim();
+    const matchesBlacklistByName = blacklist.some(b => isNameSimilar(fullNameInput, b.name));
+
+    if (blacklisted || matchesBlacklistByName) {
+      return res.status(403).json({
+        message: 'This profile is not eligible for further eligibility assessments due to a previous missed appointment.'
+      });
+    }
     
     let lead = null;
     if (matchDigits) {
@@ -61,9 +87,25 @@ const createLead = async (req, res) => {
       });
     }
 
-    // Simple auto-assign logic: assign to first available consultant
-    const consultants = await prisma.user.findMany({ where: { role: 'consultant' } });
-    const assignedToId = consultants.length > 0 ? consultants[0].id : null;
+    // Smart auto-assign: prefer property specialist for Property Investment leads
+    const finalServiceType = serviceType || serviceId || '';
+    const isPropertyLead = finalServiceType.toLowerCase().includes('property') || finalServiceType.toLowerCase().includes('investment');
+    let assignedToId = null;
+    if (isPropertyLead) {
+      // Try to find a property specialist first
+      const propertySpecialists = await prisma.user.findMany({ where: { role: 'consultant', isPropertySpecialist: true } });
+      if (propertySpecialists.length > 0) {
+        assignedToId = propertySpecialists[0].id;
+      } else {
+        // Fallback to any available consultant
+        const consultants = await prisma.user.findMany({ where: { role: 'consultant' } });
+        assignedToId = consultants.length > 0 ? consultants[0].id : null;
+      }
+    } else {
+      // Normal round-robin assignment for non-property leads
+      const consultants = await prisma.user.findMany({ where: { role: 'consultant' } });
+      assignedToId = consultants.length > 0 ? consultants[0].id : null;
+    }
 
     if (lead) {
       return res.status(400).json({ message: 'Number already exists' });
@@ -89,6 +131,11 @@ const createLead = async (req, res) => {
           meetingNotes,
           qualificationData: qualificationData || undefined,
           assignedToId,
+          preferableArea: preferableArea || null,
+          budget: budget || null,
+          sourceLanguage: sourceLanguage || null,
+          targetLanguage: targetLanguage || null,
+          wordCount: wordCount ? parseInt(wordCount, 10) : null,
           formSubmittedAt: meetingPreferredDate ? new Date() : undefined,
           status: meetingPreferredDate ? 'Form Submitted' : 'New Lead'
         }
@@ -126,6 +173,24 @@ const updateLeadStatus = async (req, res) => {
       where: { id: leadId },
       data: { status }
     });
+
+    if (status === 'No Show' || status === 'No-Show') {
+      try {
+        await prisma.blacklistedClient.upsert({
+          where: { email: lead.email.toLowerCase() },
+          update: { phone: lead.phone || '' },
+          create: {
+            email: lead.email.toLowerCase(),
+            name: `${lead.firstName} ${lead.lastName}`,
+            phone: lead.phone || ''
+          }
+        });
+        console.log(`[Blacklist] Blacklisted client on No Show status: ${lead.email}`);
+      } catch (dbErr) {
+        console.error('[Blacklist] Failed to insert blacklist record:', dbErr.message);
+      }
+    }
+
     res.json(lead);
   } catch (error) {
     res.status(500).json({ message: 'Server error updating status' });
@@ -197,7 +262,12 @@ const updateLead = async (req, res) => {
       notes, 
       timeline, 
       qualificationData,
-      assignedConsultantId 
+      assignedConsultantId,
+      preferableArea,
+      budget,
+      sourceLanguage,
+      targetLanguage,
+      wordCount
     } = req.body;
 
     const lead = await prisma.lead.update({
@@ -217,7 +287,12 @@ const updateLead = async (req, res) => {
         notes,
         timeline,
         qualificationData,
-        assignedToId: assignedConsultantId
+        assignedToId: assignedConsultantId,
+        preferableArea: preferableArea !== undefined ? preferableArea : undefined,
+        budget: budget !== undefined ? budget : undefined,
+        sourceLanguage: sourceLanguage !== undefined ? sourceLanguage : undefined,
+        targetLanguage: targetLanguage !== undefined ? targetLanguage : undefined,
+        wordCount: wordCount !== undefined ? (wordCount ? parseInt(wordCount, 10) : null) : undefined
       }
     });
 

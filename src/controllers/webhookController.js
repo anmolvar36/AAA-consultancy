@@ -46,7 +46,7 @@ exports.handleMetaWebhook = async (req, res) => {
     const change = entry?.changes?.[0];
     const value = change?.value;
 
-    // Check if WhatsApp Webhook Message
+    // 1. Check if WhatsApp Webhook Message
     if (value?.messages && value.messages.length > 0) {
       for (const msg of value.messages) {
         if (msg.from) {
@@ -59,28 +59,54 @@ exports.handleMetaWebhook = async (req, res) => {
           await communicationsQueue.add('process-meta-message', {
             phone,
             name,
-            message
+            message,
+            platform: 'whatsapp'
           }, {
             jobId: msg.id || Date.now().toString()
           });
         }
       }
-    } else {
-      // Fallback or Messenger / Mock format (like in TESTING.md)
-      const messaging = entry?.messaging?.[0];
-      if (messaging) {
-        const phone = messaging.sender?.id;
-        const message = messaging.message?.text || '';
-        const name = 'Applicant';
-
-        console.log(`Enqueuing fallback Messenger message from ${phone}`);
+    } 
+    // 2. Messenger / Instagram DM Webhooks
+    else if (entry?.messaging && entry.messaging.length > 0) {
+      for (const msg of entry.messaging) {
+        const senderId = msg.sender?.id;
+        const messageText = msg.message?.text || '';
+        const platform = payload.object === 'instagram' ? 'instagram' : 'facebook';
+        
+        console.log(`Enqueuing Direct Message from ${senderId} on ${platform}`);
         await communicationsQueue.add('process-meta-message', {
-          phone,
-          name,
-          message
+          phone: senderId,
+          name: `Meta User (${platform === 'instagram' ? 'Instagram' : 'Messenger'})`,
+          message: messageText,
+          platform
         }, {
-          jobId: messaging.message?.mid || Date.now().toString()
+          jobId: msg.message?.mid || Date.now().toString()
         });
+      }
+    }
+    // 3. Comments (Facebook Feed / Instagram Comments) Webhooks
+    else if (entry?.changes && entry.changes.length > 0) {
+      for (const chg of entry.changes) {
+        const val = chg.value;
+        const field = chg.field;
+        
+        if (field === 'feed' || field === 'comments' || field === 'comment') {
+          const commentText = val.message || val.text || '';
+          const commentId = val.comment_id || val.id;
+          const senderName = val.from?.name || 'Social User';
+          const platform = payload.object === 'instagram' ? 'instagram' : 'facebook';
+          
+          console.log(`Enqueuing Comment update from ${senderName} on ${platform} (${field}): ${commentText}`);
+          await communicationsQueue.add('process-meta-comment', {
+            commentId,
+            senderName,
+            message: commentText,
+            platform
+          }, {
+            jobId: commentId || Date.now().toString()
+          });
+        }
       }
     }
   } catch (error) {
@@ -119,6 +145,36 @@ exports.handleTikTokWebhook = async (req, res) => {
   await communicationsQueue.add('process-tiktok-lead', payload, {
     jobId: payload.lead_id || Date.now().toString(),
   });
+};
+
+exports.handleTelegramWebhook = async (req, res) => {
+  try {
+    const payload = req.body;
+    console.log('Received Telegram Webhook Payload:', JSON.stringify(payload, null, 2));
+
+    // Acknowledge event immediately to Telegram
+    res.status(200).json({ success: true });
+
+    const message = payload.message;
+    if (message && message.text) {
+      const chatId = String(message.chat.id);
+      const text = message.text;
+      const firstName = message.from?.first_name || '';
+      const lastName = message.from?.last_name || '';
+      const name = `${firstName} ${lastName}`.trim() || 'Telegram User';
+
+      console.log(`Enqueuing Telegram message from chat ${chatId}: ${text}`);
+      await communicationsQueue.add('process-telegram-message', {
+        chatId,
+        name,
+        message: text
+      }, {
+        jobId: `tg-${message.message_id || Date.now()}`
+      });
+    }
+  } catch (err) {
+    console.error('Error handling Telegram webhook:', err);
+  }
 };
 
 exports.verifyMetaWebhook = (req, res) => {

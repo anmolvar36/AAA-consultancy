@@ -29,6 +29,16 @@ exports.handleChatbotMessage = async (phone, name, text) => {
   
   const cleanMessage = text.trim().toLowerCase();
 
+  // 1b. Validate English-only message requirements
+  const hasNonAscii = /[^\x00-\x7F]/.test(text);
+  const foreignWords = ['hola', 'bonjour', 'marhaban', 'ciao', 'hallo', 'como', 'estás'];
+  const words = cleanMessage.split(/\s+/);
+  const hasForeignWord = words.some(w => foreignWords.includes(w));
+  if (hasNonAscii || hasForeignWord) {
+    await sendCustomWhatsApp(cleanPhone, "⚠️ Please message in English only. Our Customer support team only speaks English.");
+    return;
+  }
+
   const isResumeCommand = (cleanMessage === 'menu' || cleanMessage === 'help' || cleanMessage === 'start');
   if (isResumeCommand) {
     if (isAgentMode === 'true') {
@@ -71,7 +81,7 @@ exports.handleChatbotMessage = async (phone, name, text) => {
     return;
   }
 
-  // 3. Simplified Flow: If stage is 'INIT' or they trigger a resume/start command
+  // 3. State-based Flow Transitions
   if (userSession.stage === 'INIT' || isResumeCommand) {
     let lead = null;
     try {
@@ -81,6 +91,24 @@ exports.handleChatbotMessage = async (phone, name, text) => {
       });
 
       if (!lead) {
+        // Check if name is a generic placeholder name before fuzzy matching
+        const lowerName = (name || '').toLowerCase().trim();
+        const placeholders = ['applicant', 'whatsapp lead', 'lead', 'social user', 'telegram user', 'user', 'system'];
+        const isPlaceholder = placeholders.some(ph => lowerName.includes(ph));
+
+        let matchesBlacklist = false;
+        if (!isPlaceholder && lowerName) {
+          const { isNameSimilar } = require('../utils/fuzzyMatch');
+          const blacklist = await prisma.blacklistedClient.findMany();
+          matchesBlacklist = blacklist.some(b => isNameSimilar(name, b.name));
+        }
+
+        if (matchesBlacklist) {
+          console.warn(`[CHATBOT BLACKLIST] Blocked new lead creation for name "${name}" due to fuzzy blacklist match.`);
+          await sendCustomWhatsApp(cleanPhone, "This profile is not eligible for further eligibility assessments due to a previous missed appointment.");
+          return;
+        }
+
         const nameParts = name ? name.split(' ') : ['WhatsApp', 'Lead'];
         lead = await prisma.lead.create({
           data: {
@@ -107,20 +135,95 @@ exports.handleChatbotMessage = async (phone, name, text) => {
       console.warn("[CHATBOT] Error handling lead DB check/create:", dbError.message);
     }
 
-    // Send Greeting & Lead Booking Form Link
     const greetingMsg = `Greetings from *AAA Business Consultancy LLC*. Thank you for contacting us regarding Spain Visa & Residency Services.✈️✈️`;
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-    const bookingLink = `${frontendUrl}/#/public/lead-form?source=${encodeURIComponent(detectedSource)}&id=${lead ? lead.id : ''}`;
-    const instructionMsg = `To book your Free 20-Minute Eligibility Assessment & Verification, please click the link below to select your preferred date and time:\n\n${bookingLink}`;
-
+    const menuMsg = `Please select one of our services (1-4):\n\n1️⃣ Spain Visa & Residency Services\n2️⃣ Professional Case Assessment Service\n3️⃣ Property Investment Guidance Service\n4️⃣ Spanish Sworn Translation Services`;
+    
     await sendCustomWhatsApp(cleanPhone, greetingMsg);
-    await new Promise(resolve => setTimeout(resolve, 500)); // natural order delay
-    await sendCustomWhatsApp(cleanPhone, instructionMsg);
+    await new Promise(resolve => setTimeout(resolve, 500));
+    await sendCustomWhatsApp(cleanPhone, menuMsg);
 
-    // Set stage to 'BOOKING_LINK_SENT' so we don't spam the link on subsequent messages
-    userSession.stage = 'BOOKING_LINK_SENT';
+    userSession.stage = 'AWAITING_MAIN_MENU';
+    userSession.leadId = lead ? lead.id : null;
     await redis.set(sessionKey, JSON.stringify(userSession), 'EX', SESSION_TIMEOUT);
     return;
+  }
+
+  if (userSession.stage === 'AWAITING_MAIN_MENU') {
+    const choice = cleanMessage.trim();
+    if (choice === '1' || choice === '2') {
+      userSession.stage = 'AWAITING_VISA_SELECTION';
+      userSession.category = choice === '1' ? 'Visa' : 'Assessment';
+      await redis.set(sessionKey, JSON.stringify(userSession), 'EX', SESSION_TIMEOUT);
+      
+      const visaMenu = `Please select your target Spain Visa program (1-5):\n\n1️⃣ Digital Nomad Residency (DNV)\n2️⃣ Non Lucrative Residency (NLV)\n3️⃣ Study Visa (Language, Vocational Training, Bachelor & Master)\n4️⃣ Spain Tourist Visa (Schengen)\n5️⃣ Self Employed / Business Residency`;
+      await sendCustomWhatsApp(cleanPhone, visaMenu);
+      return;
+    } else if (choice === '3') {
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+      const bookingLink = `${frontendUrl}/#/public/lead-form?source=${encodeURIComponent(detectedSource)}&id=${userSession.leadId || ''}&service=property`;
+      const msg = `Click the link below to select a date and time for your Free Property Consultation:\n\n🔗 ${bookingLink}`;
+      await sendCustomWhatsApp(cleanPhone, msg);
+      
+      userSession.stage = 'BOOKING_LINK_SENT';
+      await redis.set(sessionKey, JSON.stringify(userSession), 'EX', SESSION_TIMEOUT);
+      return;
+    } else if (choice === '4') {
+      userSession.stage = 'AWAITING_TRANSLATION_CONFIRM';
+      await redis.set(sessionKey, JSON.stringify(userSession), 'EX', SESSION_TIMEOUT);
+      
+      const rateMsg = `📄 *Spanish Sworn Translation Rates* (excluding 5% VAT):\n\n🇬🇧 English to Spanish: €0.15 Per Word\n🇸🇦 Arabic to Spanish: €0.25 Per Word\n🇵🇰 Urdu to Spanish: €0.40 Per Word\n\n*Would you like to proceed with your translation estimate?* Reply *'YES'* to get your document upload link.`;
+      await sendCustomWhatsApp(cleanPhone, rateMsg);
+      return;
+    } else {
+      await sendCustomWhatsApp(cleanPhone, "⚠️ Invalid selection. Please reply with a number between 1 and 4:\n\n1️⃣ Spain Visa & Residency Services\n2️⃣ Professional Case Assessment Service\n3️⃣ Property Investment Guidance Service\n4️⃣ Spanish Sworn Translation Services");
+      return;
+    }
+  }
+
+  if (userSession.stage === 'AWAITING_VISA_SELECTION') {
+    const choice = cleanMessage.trim();
+    const visaCodes = {
+      '1': 'dnv',
+      '2': 'nlv',
+      '3': 'study',
+      '4': 'tourist',
+      '5': 'business'
+    };
+    const serviceCode = visaCodes[choice];
+    if (serviceCode) {
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+      const bookingLink = `${frontendUrl}/#/public/lead-form?source=${encodeURIComponent(detectedSource)}&id=${userSession.leadId || ''}&service=${serviceCode}`;
+      const msg = `To select your preferred appointment date and time, please click the booking link below:\n\n🔗 ${bookingLink}`;
+      await sendCustomWhatsApp(cleanPhone, msg);
+      
+      userSession.stage = 'BOOKING_LINK_SENT';
+      await redis.set(sessionKey, JSON.stringify(userSession), 'EX', SESSION_TIMEOUT);
+      return;
+    } else {
+      await sendCustomWhatsApp(cleanPhone, "⚠️ Invalid selection. Please reply with a number between 1 and 5:\n\n1️⃣ Digital Nomad Residency (DNV)\n2️⃣ Non Lucrative Residency (NLV)\n3️⃣ Study Visa\n4️⃣ Spain Tourist Visa\n5️⃣ Self Employed / Business Residency");
+      return;
+    }
+  }
+
+  if (userSession.stage === 'AWAITING_TRANSLATION_CONFIRM') {
+    if (cleanMessage.includes('yes') || cleanMessage === 'y') {
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+      const uploadLink = `${frontendUrl}/#/public/sworn-translation?id=${userSession.leadId || ''}`;
+      const msg = `Please click the link below to upload your documents (PDF format only) for word-count analysis and payment setup:\n\n🔗 ${uploadLink}`;
+      await sendCustomWhatsApp(cleanPhone, msg);
+      
+      userSession.stage = 'BOOKING_LINK_SENT';
+      await redis.set(sessionKey, JSON.stringify(userSession), 'EX', SESSION_TIMEOUT);
+      return;
+    } else if (cleanMessage.includes('no') || cleanMessage === 'n') {
+      userSession.stage = 'INIT';
+      await redis.set(sessionKey, JSON.stringify(userSession), 'EX', SESSION_TIMEOUT);
+      await sendCustomWhatsApp(cleanPhone, "Selection reset. Type *'menu'* to display main options again.");
+      return;
+    } else {
+      await sendCustomWhatsApp(cleanPhone, "⚠️ Please confirm by replying *'YES'* or *'NO'*.");
+      return;
+    }
   }
 
   // 4. Subsequent messages: Hand off to AI or Agent
@@ -273,3 +376,5 @@ async function getGeminiAnswer(userQuery) {
   );
   return response.data.candidates[0].content.parts[0].text.trim();
 }
+
+exports.sendCustomWhatsApp = sendCustomWhatsApp;

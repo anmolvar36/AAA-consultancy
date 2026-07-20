@@ -67,13 +67,32 @@ app.use('/api/v1/webhooks', require('./routes/webhookRoutes'));
 app.use('/api/v1/booking', require('./routes/bookingRoutes'));
 app.use('/api/v1/ai', require('./routes/aiRoutes'));
 app.use('/api/v1/notifications', require('./routes/notificationRoutes'));
+app.use('/api/v1/communications', require('./routes/communicationRoutes'));
 
 // Initialize BullMQ Workers
 const { setupWorkers } = require('./queues/workers');
 setupWorkers();
 
+// Initialize CEO Discount Automation scheduler
+const { startDiscountScheduler } = require('./services/discountAutomationService');
+startDiscountScheduler();
+
+// Initialize Payment Drip Reminders scheduler
+const { startReminderScheduler } = require('./services/reminderScheduler');
+startReminderScheduler();
+
 // Start Server
 const PORT = process.env.PORT || 5000;
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`[Server Error] Port ${PORT} is already in use. Please kill existing process or wait...`);
+    process.exit(1);
+  } else {
+    console.error('[Server Error]', err);
+  }
+});
+
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });

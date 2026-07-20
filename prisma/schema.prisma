@@ -21,6 +21,13 @@ model User {
   commissionPaid   Float?   @default(0)
   immigrationBio   String?  @db.Text
   customPermissions Json?   // e.g. { canViewFinance: true }
+  visaExpertise    Json?    // Array of strings, e.g. ["DNV", "NLV"]
+  isPropertySpecialist Boolean @default(false)
+  languages        Json?
+  specialties      Json?
+  isSenior         Boolean  @default(false)
+  maxCapacity      Int      @default(20)
+  avatar           String?  @db.Text
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -31,6 +38,7 @@ model User {
   assignedLeads    Lead[]   @relation("AgentLeads")
   assignedClients  Client[] @relation("AgentClients")
   consultations    Consultation[] @relation("AgentConsultations")
+  communicationLogs CommunicationLog[] @relation("AgentCommunications")
 
   @@map("users")
 }
@@ -59,6 +67,16 @@ model Lead {
   meetingPreferredLanguage String?
   meetingNotes             String?   @db.Text
   formSubmittedAt          DateTime?
+  // Property Investment Service Fields
+  preferableArea   String?
+  budget           String?
+  // Translation Service Lead Fields
+  sourceLanguage   String?
+  targetLanguage   String?
+  wordCount        Int?
+  aiNotes          String?  @db.Text
+  isAiFlagged      Boolean  @default(false)
+  flagReason       String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -101,6 +119,12 @@ model Client {
   deviceFingerprint String?
   isBlocked         Boolean  @default(false)
 
+  // Property Investment Service Fields
+  preferableArea   String?
+  budget           String?
+  aiNotes          String?  @db.Text
+  isAiFlagged      Boolean  @default(false)
+  flagReason       String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -113,6 +137,7 @@ model Client {
   applicationCycles ApplicationCycle[]
   refundRequests   RefundRequest[]
   communications   CommunicationLog[]
+  discountCodes    DiscountCode[]
 
   @@map("clients")
 }
@@ -131,6 +156,7 @@ model Consultation {
   recommendedPackageId String?
   internalNotes    String?  @db.Text
 
+  type             String   @default("eligibility") // eligibility, property_guidance, general
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -156,6 +182,8 @@ model ApplicationCycle {
   appealDeadline   DateTime?
   status           String   @default("Resubmission in Progress")
   serviceType      String?
+  type             String?  @default("resubmission") // resubmission, appeal
+  appealDocuments  Json?
   
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
@@ -208,6 +236,7 @@ model Document {
   uploadedDate     DateTime @default(now())
   updatedAt        DateTime @updatedAt
   belongsTo        String?  // e.g. "Main Applicant", "Spouse", "Child 1"
+  wordCount        Int?     @default(0)
 
   @@map("documents")
 }
@@ -241,6 +270,7 @@ model CompanySetting {
   autoAssignConsultant Boolean  @default(true)
   recordingStorage     String   @default("cloud")
   swornTranslationRates Json?
+  leadStages           Json?
   
   updatedAt            DateTime @updatedAt
 
@@ -290,6 +320,8 @@ model CommunicationLog {
   readStatus         Boolean  @default(false)
   failureReason      String?  @db.Text
   content            String   @db.Text
+  respondedByUserId  String?
+  respondedByUser    User?    @relation("AgentCommunications", fields: [respondedByUserId], references: [id])
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
@@ -343,5 +375,52 @@ model ChatSession {
   updatedAt        DateTime @updatedAt
 
   @@map("chat_sessions")
+}
+
+model DiscountCode {
+  id               String   @id @default(uuid())
+  code             String   @unique
+  discountPercent  Float    @default(10)
+  expiryDate       DateTime
+  isUsed           Boolean  @default(false)
+  clientId         String
+  client           Client   @relation(fields: [clientId], references: [id])
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@map("discount_codes")
+}
+
+model AgentSchedule {
+  id               String   @id @default(uuid())
+  agentId          String
+  dayOfWeek        Int      // 0 (Sunday) to 6 (Saturday)
+  startTime        String   // e.g. "09:00"
+  endTime          String   // e.g. "17:00"
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@map("agent_schedules")
+}
+
+model ReminderLog {
+  id               String   @id @default(uuid())
+  clientId         String
+  type             String   // '2h' | '24h' | '2d' | '5d'
+  sentAt           DateTime @default(now())
+
+  @@map("reminder_logs")
+}
+
+model BlacklistedClient {
+  id               String   @id @default(uuid())
+  email            String   @unique
+  name             String
+  phone            String   @unique
+  createdAt        DateTime @default(now())
+
+  @@map("blacklisted_clients")
 }
 

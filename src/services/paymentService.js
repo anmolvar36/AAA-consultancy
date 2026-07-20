@@ -74,7 +74,7 @@ const processPaymentEvent = async (event) => {
         if (payment.client) {
           const isTranslation = (payment.client.serviceType || '').includes('Translation') || (payment.client.serviceId || '').includes('translation');
           const packageId = session.metadata?.packageId;
-          await tx.client.update({
+          const updatedClient = await tx.client.update({
             where: { id: payment.clientId },
             data: {
               documentUploadAllowed: true,
@@ -83,6 +83,15 @@ const processPaymentEvent = async (event) => {
               visaStatus: isTranslation ? 'Not Started' : 'Document Preparation'
             }
           });
+
+          // Send Checklist Email
+          try {
+            const { sendVisaChecklist } = require('./emailService');
+            await sendVisaChecklist(updatedClient.email, `${updatedClient.firstName} ${updatedClient.lastName}`, updatedClient.serviceType);
+            console.log(`[Auto-Checklist Webhook] Sent checklist to client ${updatedClient.email} for ${updatedClient.serviceType}`);
+          } catch (emailErr) {
+            console.error('[Auto-Checklist Webhook] Failed to send checklist email:', emailErr.message);
+          }
         }
         
         // Remove from payment drip queue if applicable (handled by queue removal logic usually)

@@ -157,7 +157,15 @@ let CURRENT_LEAD_STAGES = [
 ];
 
 const getLeadStages = async (req, res) => {
-  res.json(CURRENT_LEAD_STAGES);
+  try {
+    const setting = await prisma.companySetting.findFirst();
+    if (setting && setting.leadStages && Array.isArray(setting.leadStages) && setting.leadStages.length > 0) {
+      return res.json(setting.leadStages);
+    }
+    res.json(CURRENT_LEAD_STAGES);
+  } catch (error) {
+    res.json(CURRENT_LEAD_STAGES);
+  }
 };
 
 const updateLeadStages = async (req, res) => {
@@ -165,7 +173,18 @@ const updateLeadStages = async (req, res) => {
     const stages = req.body;
     if (Array.isArray(stages)) {
       CURRENT_LEAD_STAGES = stages;
-      res.json({ success: true, message: 'Stages updated successfully', data: CURRENT_LEAD_STAGES });
+      let setting = await prisma.companySetting.findFirst();
+      if (!setting) {
+        setting = await prisma.companySetting.create({
+          data: { leadStages: stages }
+        });
+      } else {
+        setting = await prisma.companySetting.update({
+          where: { id: setting.id },
+          data: { leadStages: stages }
+        });
+      }
+      res.json({ success: true, message: 'Stages updated and saved to DB successfully', data: stages });
     } else {
       res.status(400).json({ error: 'Invalid stages format' });
     }

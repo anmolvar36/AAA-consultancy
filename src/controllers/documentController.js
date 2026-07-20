@@ -32,27 +32,128 @@ const uploadDocument = async (req, res) => {
     
     const { clientId, category, belongsTo } = req.body;
     
+    // Extract word count for PDF files
+    let wordCount = 0;
+    const isPdf = (req.file.originalname || '').toLowerCase().endsWith('.pdf') || req.file.mimetype === 'application/pdf';
+    if (isPdf && req.file.path) {
+      try {
+        const fs = require('fs');
+        const pdfParse = require('pdf-parse');
+        const dataBuffer = fs.readFileSync(req.file.path);
+        const pdfData = await pdfParse(dataBuffer);
+        if (pdfData && pdfData.text) {
+          const words = pdfData.text.trim().split(/\s+/).filter(w => w.length > 0);
+          wordCount = words.length;
+        }
+      } catch (pdfErr) {
+        console.warn('[PDF Parse Word Count] Could not extract text:', pdfErr.message);
+      }
+    }
+
     // 1. Save document to DB
     const document = await prisma.document.create({
       data: {
         clientId,
         name: req.file.originalname,
         category: category || 'General',
-        url: `/uploads/${req.file.filename}`,
+        url: req.file.location || `/uploads/${req.file.filename}`,
         size: `${(req.file.size / 1024 / 1024).toFixed(2)} MB`,
-        status: 'Pending Verification',
-        belongsTo: belongsTo || 'Main Applicant'
+        status: req.body.status || 'Pending Verification',
+        belongsTo: belongsTo || 'Main Applicant',
+        wordCount
       }
     });
 
-    // 2. Find the client to get their name and assigned operator
-    const client = await prisma.client.findUnique({
+    // 2. Find the client to get their name, email and assigned operator
+    let client = await prisma.client.findUnique({
       where: { id: clientId },
-      select: { firstName: true, lastName: true, assignedToId: true }
+      select: { 
+        firstName: true, 
+        lastName: true, 
+        email: true,
+        assignedToId: true,
+        assignedTo: {
+          select: { email: true, hotlineNumber: true }
+        }
+      }
     });
 
     if (client) {
       const clientName = `${client.firstName} ${client.lastName}`;
+      const fileNameLower = (req.file.originalname || '').toLowerCase();
+      const isTranslationDoc = (category || '').toLowerCase().includes('translation') || fileNameLower.includes('translation') || fileNameLower.includes('sworn');
+
+      // Check if uploaded by staff/agent for the client -> Send client email notification
+      if (req.body.uploadedByRole === 'agent' || category === 'Official Sworn Output' || belongsTo === 'Staff Upload') {
+        if (client.email) {
+          const { sendEmail } = require('../services/emailService');
+          try {
+            await sendEmail({
+              to: client.email,
+              subject: `[COMPLETED] Your Official Sworn Translation is Ready! 📜`,
+              html: `
+                <h3>Hello ${clientName},</h3>
+                <p>Great news! Your official Spanish Sworn Translation document <b>${req.file.originalname}</b> has been completed and uploaded by our operations team.</p>
+                <p>It is now available for direct download on your <b>Client Portal</b> under your documents section.</p>
+                <br/>
+                <p>Best regards,<br/><b>AAA Immigration Services LLC</b></p>
+              `
+            });
+            console.log(`[Sworn Delivery] Client notification email sent to ${client.email}`);
+          } catch (e) {
+            console.error('Failed to notify client via email:', e.message);
+          }
+        }
+      }
+      
+      // Simulate classification check: handwritten/unreadable names trigger the routing override
+      const isHandwritten = fileNameLower.includes('handwritten') || fileNameLower.includes('blurry') || fileNameLower.includes('draft');
+      
+      if (isTranslationDoc && isHandwritten) {
+        const flagReason = 'AI Quality Flag: Handwritten or unreadable scan detected';
+        
+        // Fetch all Senior Operators (operations role with isSenior: true)
+        const seniorOperators = await prisma.user.findMany({
+          where: {
+            OR: [
+              { role: 'operations' },
+              { role: 'admin' },
+              { role: 'super_admin' }
+            ],
+            isSenior: true
+          },
+          include: {
+            _count: {
+              select: { assignedClients: true }
+            }
+          }
+        });
+
+        if (seniorOperators.length > 0) {
+          // Sort by active client workload count (lowest first)
+          seniorOperators.sort((a, b) => a._count.assignedClients - b._count.assignedClients);
+          const selectedSenior = seniorOperators[0];
+          
+          // Re-assign the client and flag them in the database
+          await prisma.client.update({
+            where: { id: clientId },
+            data: {
+              assignedToId: selectedSenior.id,
+              isAiFlagged: true,
+              flagReason
+            }
+          });
+          
+          // Update local variables for notification
+          client.assignedToId = selectedSenior.id;
+          client.assignedTo = {
+            email: selectedSenior.email,
+            hotlineNumber: selectedSenior.hotlineNumber || selectedSenior.phone
+          };
+          
+          console.log(`[AI Auto-Route] Document flagged. Client ${clientId} auto-routed to Senior Operator: ${selectedSenior.fullName}`);
+        }
+      }
 
       // 3. Notify the assigned operator (if any)
       if (client.assignedToId) {
@@ -64,6 +165,40 @@ const uploadDocument = async (req, res) => {
           documentName: req.file.originalname,
           category: category || 'General'
         });
+
+        // Send email alert to operator
+        if (client.assignedTo && client.assignedTo.email) {
+          const { sendEmail } = require('../services/emailService');
+          try {
+            await sendEmail({
+              to: client.assignedTo.email,
+              subject: `[ALERT] New Document Uploaded by ${clientName} 📄`,
+              html: `
+                <h3>Hello,</h3>
+                <p>Client <b>${clientName}</b> has uploaded a new document for your review:</p>
+                <ul>
+                  <li><b>Document Name:</b> ${req.file.originalname}</li>
+                  <li><b>Category:</b> ${category || 'General'}</li>
+                  <li><b>Belongs To:</b> ${belongsTo || 'Main Applicant'}</li>
+                </ul>
+                <p>Please log in to the admin panel to review and verify this document.</p>
+              `
+            });
+          } catch (e) {
+            console.error('Failed to notify operator via email:', e.message);
+          }
+        }
+
+        // Send WhatsApp alert to operator
+        if (client.assignedTo && client.assignedTo.hotlineNumber) {
+          const { sendCustomWhatsApp } = require('../services/chatbotService');
+          try {
+            const operatorMsg = `🔔 *[ALERT] New Document Uploaded*\n\nClient: *${clientName}*\nFile: *${req.file.originalname}*\nCategory: *${category || 'General'}*\n\nPlease log in to review.`;
+            await sendCustomWhatsApp(client.assignedTo.hotlineNumber, operatorMsg);
+          } catch (e) {
+            console.error('Failed to notify operator via WhatsApp:', e.message);
+          }
+        }
       } else {
         console.log(`[Notification] Client ${clientName} has no assigned operator — notification skipped.`);
       }
@@ -140,4 +275,33 @@ const uploadTranslatedDocument = async (req, res) => {
   }
 };
 
-module.exports = { getDocuments, uploadDocument, reviewDocument, uploadTranslatedDocument };
+const deleteDocument = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const doc = await prisma.document.findUnique({ where: { id } });
+    if (!doc) {
+      return res.status(404).json({ message: 'Document not found' });
+    }
+
+    // 🔒 COMPLIANCE HARD-BLOCK: Verified / Approved / Submitted compliance documents cannot be deleted
+    const protectedStatuses = ['VERIFIED', 'APPROVED', 'SUBMITTED', 'TRANSLATED'];
+    const currentStatusUpper = (doc.status || '').toUpperCase();
+
+    if (protectedStatuses.includes(currentStatusUpper) || (req.user.role === 'client' && currentStatusUpper !== 'PENDING VERIFICATION')) {
+      return res.status(403).json({
+        message: 'Compliance Security Restriction: Verified or processed application documents cannot be deleted. Contact system admin for audit overrides.'
+      });
+    }
+
+    // Remove document record from DB
+    await prisma.document.delete({ where: { id } });
+
+    res.json({ success: true, message: 'Document deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting document:', error);
+    res.status(500).json({ message: 'Server error deleting document' });
+  }
+};
+
+module.exports = { getDocuments, uploadDocument, reviewDocument, uploadTranslatedDocument, deleteDocument };

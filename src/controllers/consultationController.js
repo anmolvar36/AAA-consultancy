@@ -117,7 +117,162 @@ const updateOutcome = async (req, res) => {
       where: { id },
       data: { status, eligibility, recommendedService, recommendedPackageId, internalNotes }
     });
-    
+
+    // Auto-update associated lead status if completed
+    if (consultation.leadId && status === 'Completed') {
+      let isEligible = false;
+      let isNotEligible = false;
+
+      let eligVal = eligibility || '';
+      if (typeof eligibility === 'string' && eligibility.startsWith('{')) {
+        try {
+          const parsed = JSON.parse(eligibility);
+          eligVal = parsed.eligibility || '';
+        } catch (e) {}
+      }
+
+      if (typeof eligVal === 'string') {
+        const lowerElig = eligVal.toLowerCase();
+        if (lowerElig.includes('not eligible') || lowerElig === 'not_eligible') {
+          isNotEligible = true;
+        } else if (lowerElig.includes('eligible') || lowerElig === 'eligible') {
+          isEligible = true;
+        }
+      }
+
+      let newLeadStatus = undefined;
+      if (isEligible) {
+        newLeadStatus = 'Eligible';
+      } else if (isNotEligible) {
+        newLeadStatus = 'Not Eligible';
+      }
+
+      if (newLeadStatus) {
+        const updatedLead = await prisma.lead.update({
+          where: { id: consultation.leadId },
+          data: { status: newLeadStatus }
+        });
+        console.log(`[Outcome Status Trigger] Lead ${consultation.leadId} status updated to: ${newLeadStatus}`);
+
+        // If Eligible, auto-send appropriate WhatsApp message based on service type
+        if (newLeadStatus === 'Eligible' && updatedLead.clientId) {
+          const clientRecord = await prisma.client.findUnique({
+            where: { id: updatedLead.clientId }
+          });
+          if (clientRecord && clientRecord.phone) {
+            try {
+              const { sendCustomWhatsApp } = require('../services/chatbotService');
+              const checkoutLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/portal/documents/${clientRecord.id}`;
+              const clientName = `${clientRecord.firstName} ${clientRecord.lastName}`;
+              const serviceTypeLower = (updatedLead.serviceType || clientRecord.serviceType || '').toLowerCase();
+              const isPropertyService = serviceTypeLower.includes('property') || serviceTypeLower.includes('investment');
+
+              let msgToSend;
+              if (isPropertyService) {
+                // Property Investment — different follow-up message
+                msgToSend = `Hello *${clientName}*,\n\nThank you for attending your Free Property Investment Consultation! 🏠🇪🇸\n\nBased on our discussion, our team will now prepare a curated list of properties that match your investment criteria:\n📍 *Preferred Area:* ${updatedLead.preferableArea || clientRecord.serviceType || 'Spain'}\n💰 *Budget Range:* ${updatedLead.budget || 'As discussed'}\n\nOur property investment specialist will contact you shortly with tailored property listings and next steps.\n\nFor any questions, you can also access your client portal here:\n🔗 ${checkoutLink}`;
+              } else {
+                // Spain Visa — standard package selection message
+                msgToSend = `Hello *${clientName}*,\n\nThank you for attending your Free Spain Visa Eligibility Assessment. 🎉\n\nBased on our assessment, you are *ELIGIBLE* to proceed!\n\nPlease select your preferred Spanish Residency service package to initiate processing:\n\n*OPTION B: Full Processing (End-to-End)*\n- Base Fee: €3,500\n- Add applicant: €500\n- 50% Refund Guarantee if rejected\n\n*OPTION C: Premium Relocation*\n- Base Fee: €4,750\n- Add applicant: €750\n- 50% Refund Guarantee + settlement help in Spain\n\n*OPTION D: Administrative Relocation*\n- Base Fee: €1,750\n- Add applicant: €500\n\nTo select your package and check out, please click the secure link below:\n🔗 ${checkoutLink}`;
+              }
+
+              await sendCustomWhatsApp(clientRecord.phone, msgToSend);
+              console.log(`[Auto-WhatsApp] Sent ${isPropertyService ? 'property follow-up' : 'package options'} to client ${clientRecord.phone}`);
+            } catch (err) {
+              console.error('[Auto-WhatsApp] Failed to send WhatsApp message:', err.message);
+            }
+          }
+        }
+      }
+    }
+
+    // Auto-update associated lead status if No Show
+    if (consultation.leadId && (status === 'No Show' || status === 'No-Show' || status === 'NO_SHOW')) {
+      const updatedLead = await prisma.lead.update({
+        where: { id: consultation.leadId },
+        data: { status: 'No Show' }
+      });
+
+      // Blacklist the lead details
+      try {
+        await prisma.blacklistedClient.upsert({
+          where: { email: updatedLead.email.toLowerCase() },
+          update: { phone: updatedLead.phone || '' },
+          create: {
+            email: updatedLead.email.toLowerCase(),
+            name: `${updatedLead.firstName} ${updatedLead.lastName}`,
+            phone: updatedLead.phone || ''
+          }
+        });
+        console.log(`[Blacklist] Blacklisted client on No Show status: ${updatedLead.email}`);
+      } catch (dbErr) {
+        console.error('[Blacklist] Failed to insert blacklist record:', dbErr.message);
+      }
+
+      // Send No Show WhatsApp and Email
+      try {
+        const { sendCustomWhatsApp } = require('../services/chatbotService');
+        const clientName = `${updatedLead.firstName} ${updatedLead.lastName}`;
+        const paymentLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/portal/documents/${updatedLead.clientId || ''}`;
+        
+        const noShowMsg = `Hello *${clientName}*,\n\nYour Free Eligibility Assessment has been automatically cancelled because you did not join the meeting within 10 minutes of the scheduled start time.\n\nDue to our no-show policy, we are unable to reschedule another Free Eligibility Assessment. You are welcome to review our services, packages, requirements, and application process by visiting the link below:\n\nServices & Packages: https://aaabusinessconsultancy.com/services-and-packages/\n\nIf you decide to proceed, we offer professional case assessment which is only *€250* including dedicated One-to-One Case Review. You can checkout here:\n🔗 ${paymentLink}`;
+        
+        await sendCustomWhatsApp(updatedLead.phone, noShowMsg);
+        
+        // Also send Email
+        await sendEmail({
+          to: updatedLead.email,
+          subject: 'Your Spain Visa Consultation Cancellation - AAA Business Consultancy',
+          html: `
+            <h3>Consultation Cancelled - No Show</h3>
+            <p>Dear ${updatedLead.firstName},</p>
+            <p>Your Free Eligibility Assessment has been automatically cancelled because you did not join the meeting within 10 minutes of the scheduled start time.</p>
+            <p>Due to our no-show policy, we are unable to reschedule another Free Eligibility Assessment. You are welcome to review our services, packages, requirements, and application process by visiting <a href="https://aaabusinessconsultancy.com/services-and-packages/">Services & Packages</a>.</p>
+            <p>If you decide to proceed, we offer professional case assessment which is only <strong>€250</strong> including a dedicated One-to-One Case Review. You can checkout using this link: <a href="${paymentLink}">${paymentLink}</a></p>
+            <p>Thank you for your understanding.</p>
+          `
+        });
+        console.log(`[Auto-NoShow] Sent no-show notifications to ${updatedLead.email}`);
+      } catch (err) {
+        console.error('[Auto-NoShow] Failed to send no-show notifications:', err.message);
+      }
+    }
+
+    // Auto-update associated lead status if Cancelled
+    if (consultation.leadId && status === 'Cancelled') {
+      const updatedLead = await prisma.lead.update({
+        where: { id: consultation.leadId },
+        data: { status: 'Cancelled' }
+      });
+
+      // Send Rebook link immediately
+      try {
+        const { sendCustomWhatsApp } = require('../services/chatbotService');
+        const clientName = `${updatedLead.firstName} ${updatedLead.lastName}`;
+        const rebookLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/public/lead-form?id=${updatedLead.id}&rebook=true`;
+        
+        const cancelMsg = `Hello *${clientName}*,\n\nYour Spain Visa Consultation has been cancelled. You can easily rebook your free Eligibility Assessment at any time using the link below:\n\n🔗 ${rebookLink}`;
+        
+        await sendCustomWhatsApp(updatedLead.phone, cancelMsg);
+        
+        // Also send Email
+        await sendEmail({
+          to: updatedLead.email,
+          subject: 'Spain Visa Consultation Cancelled - Rebook Now',
+          html: `
+            <h3>Consultation Cancelled</h3>
+            <p>Dear ${updatedLead.firstName},</p>
+            <p>Your Spain Visa Consultation has been cancelled. You can easily rebook your free Eligibility Assessment at any time using the link below:</p>
+            <p><a href="${rebookLink}" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">Rebook Consultation</a></p>
+            <p>Thank you!</p>
+          `
+        });
+        console.log(`[Auto-Cancel] Sent cancellation rebook link to ${updatedLead.email}`);
+      } catch (err) {
+        console.error('[Auto-Cancel] Failed to send cancellation notifications:', err.message);
+      }
+    }
+
     res.json(consultation);
   } catch (error) {
     res.status(500).json({ message: 'Server error updating consultation outcome' });

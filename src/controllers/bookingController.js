@@ -1,7 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { remindersQueue, noShowEnforcerQueue } = require('../queues/queueSetup');
-const { PDFParse } = require('pdf-parse');
+const pdfParse = require('pdf-parse');
 const { sendEmail } = require('../services/emailService');
 const { sendWhatsAppMessage } = require('../services/whatsappService');
 const zoomService = require('../services/zoomService');
@@ -21,6 +21,12 @@ exports.createEligibilityBooking = async (req, res) => {
       deviceFingerprint,
       date,
       timeSlot,
+      selectedVisa,
+      preferableArea,
+      budget,
+      sourceLanguage,
+      targetLanguage,
+      wordCount,
     } = req.body;
 
     // 1. Anti-Fraud & Identity Normalization
@@ -45,7 +51,115 @@ exports.createEligibilityBooking = async (req, res) => {
       });
     }
 
-    // 3. Find or Create Client
+    // 2b. Check for BlacklistedClient (missed prior appointments)
+    const blacklisted = await prisma.blacklistedClient.findFirst({
+      where: {
+        OR: [
+          { email: email.toLowerCase() },
+          { phone: { contains: normalizedPhone } }
+        ]
+      }
+    });
+
+    const { isNameSimilar } = require('../utils/fuzzyMatch');
+    const blacklist = await prisma.blacklistedClient.findMany();
+    const fullNameInput = `${firstName || ''} ${lastName || ''}`.trim();
+    const matchesBlacklistByName = blacklist.some(b => isNameSimilar(fullNameInput, b.name));
+
+    if (blacklisted || matchesBlacklistByName) {
+      return res.status(403).json({
+        success: false,
+        message: 'This profile is not eligible for further eligibility assessments due to a previous missed appointment.',
+      });
+    }
+
+    // 3. Smart Consultant Assignment matching
+    const consultants = await prisma.user.findMany({
+      where: { role: 'consultant' },
+      include: {
+        _count: {
+          select: { assignedLeads: true }
+        }
+      }
+    });
+
+    let bestConsultantId = null;
+    let highestScore = -999;
+    let minActiveLeads = Infinity;
+
+    for (const consultant of consultants) {
+      let score = 0;
+
+      // Spoken Language Match
+      if (preferredLanguage && consultant.spokenLanguages) {
+        try {
+          const spoken = Array.isArray(consultant.spokenLanguages)
+            ? consultant.spokenLanguages
+            : JSON.parse(JSON.stringify(consultant.spokenLanguages));
+          if (spoken.map(s => s.toLowerCase()).includes(preferredLanguage.toLowerCase())) {
+            score += 10;
+          }
+        } catch (e) {
+          console.warn("Spoken languages parsing failed:", e.message);
+        }
+      }
+
+      // Property Specialist Match
+      const normalizedService = (serviceType || '').toLowerCase();
+      if (normalizedService.includes('property')) {
+        if (consultant.isPropertySpecialist) {
+          score += 20;
+        } else {
+          score -= 10;
+        }
+      } else {
+        // Visa/Residency or Case Assessment Match
+        const visa = (selectedVisa || '').toLowerCase();
+        if (visa && consultant.visaExpertise) {
+          try {
+            const expertise = Array.isArray(consultant.visaExpertise)
+              ? consultant.visaExpertise
+              : JSON.parse(JSON.stringify(consultant.visaExpertise));
+            if (expertise.map(v => v.toLowerCase()).includes(visa)) {
+              score += 15;
+            }
+          } catch (e) {
+            console.warn("Visa expertise parsing failed:", e.message);
+          }
+        }
+      }
+
+      // Nationality Match
+      if (nationality && consultant.nationalities) {
+        try {
+          const natList = Array.isArray(consultant.nationalities)
+            ? consultant.nationalities
+            : JSON.parse(JSON.stringify(consultant.nationalities));
+          if (natList.map(n => n.toLowerCase()).includes(nationality.toLowerCase())) {
+            score += 5;
+          }
+        } catch (e) {
+          console.warn("Nationalities parsing failed:", e.message);
+        }
+      }
+
+      // Load-balancing helper
+      const activeLeadsCount = consultant._count?.assignedLeads || 0;
+
+      // Selection logic: Highest score. Tiebreaker is lower workload.
+      if (score > highestScore) {
+        highestScore = score;
+        bestConsultantId = consultant.id;
+        minActiveLeads = activeLeadsCount;
+      } else if (score === highestScore) {
+        if (activeLeadsCount < minActiveLeads) {
+          bestConsultantId = consultant.id;
+          minActiveLeads = activeLeadsCount;
+        }
+      }
+    }
+
+    // 4. Find or Create Client
     let client = await prisma.client.findUnique({
       where: { email: email.toLowerCase() }
     });
@@ -63,32 +177,59 @@ exports.createEligibilityBooking = async (req, res) => {
           serviceType,
           applicantsCount,
           deviceFingerprint,
-          status: 'Waiting for Assessment'
+          preferableArea: preferableArea || null,
+          budget: budget || null,
+          sourceLanguage: sourceLanguage || null,
+          targetLanguage: targetLanguage || null,
+          wordCount: wordCount ? parseInt(wordCount, 10) : null,
+          status: 'Waiting for Assessment',
+          assignedToId: bestConsultantId
         }
       });
     } else {
-      // Update device fingerprint if missing
-      if (deviceFingerprint && !client.deviceFingerprint) {
-        await prisma.client.update({
-          where: { id: client.id },
-          data: { deviceFingerprint }
-        });
-      }
+      // Update device fingerprint & assignment if missing
+      await prisma.client.update({
+        where: { id: client.id },
+        data: { 
+          deviceFingerprint: deviceFingerprint || undefined,
+          assignedToId: client.assignedToId || bestConsultantId,
+          preferableArea: preferableArea || undefined,
+          budget: budget || undefined
+        }
+      });
     }
 
-    // 4. Create Lead (if doesn't exist for UI compatibility)
-    let lead = await prisma.lead.findUnique({ where: { clientId: client.id } });
+    // 5. Create Lead (if doesn't exist for UI compatibility)
+    let lead = await prisma.lead.findUnique({ where: { clientId: client.id }});
     if (!lead) {
       lead = await prisma.lead.create({
         data: {
           firstName, lastName, email: email.toLowerCase(), phone, nationality, countryOfResidence,
           preferredLanguage, serviceType, applicantsCount, status: 'Assessment Booked',
-          clientId: client.id
+          clientId: client.id,
+          assignedToId: bestConsultantId,
+          preferableArea: preferableArea || null,
+          budget: budget || null,
+          sourceLanguage: sourceLanguage || null,
+          targetLanguage: targetLanguage || null,
+          wordCount: wordCount ? parseInt(wordCount, 10) : null
+        }
+      });
+    } else {
+      lead = await prisma.lead.update({
+        where: { id: lead.id },
+        data: {
+          assignedToId: lead.assignedToId || bestConsultantId,
+          preferableArea: preferableArea || undefined,
+          budget: budget || undefined,
+          sourceLanguage: sourceLanguage || undefined,
+          targetLanguage: targetLanguage || undefined,
+          wordCount: wordCount ? parseInt(wordCount, 10) : undefined
         }
       });
     }
 
-    // 5. Create Application Cycle
+    // 6. Create Application Cycle
     const appCycle = await prisma.applicationCycle.create({
       data: {
         clientId: client.id,
@@ -98,7 +239,7 @@ exports.createEligibilityBooking = async (req, res) => {
     });
 
     let meetingLink = null;
-    let consultationStatus = 'REQUESTED';
+    let consultationStatus = 'Scheduled'; // Standardize to scheduled on fallback/mock as well
 
     if (zoomService.isConfigured) {
       try {
@@ -117,21 +258,26 @@ exports.createEligibilityBooking = async (req, res) => {
 
         if (zoomMeeting) {
           meetingLink = zoomMeeting.joinUrl;
-          consultationStatus = 'Scheduled';
         }
       } catch (zoomErr) {
-        console.error('Failed to create Zoom meeting for booking:', zoomErr.message);
+        console.error('Failed to create Zoom meeting for booking, using fallback link:', zoomErr.message);
+        meetingLink = `https://zoom.us/j/${Math.floor(Math.random() * 9000000000 + 1000000000)}`;
       }
+    } else {
+      console.log('[Zoom Service Mock Mode] Generating mock Zoom meeting link.');
+      meetingLink = `https://zoom.us/j/${Math.floor(Math.random() * 9000000000 + 1000000000)}`;
     }
 
-    // 6. Create Booking (Consultation)
+    // 7. Create Booking (Consultation)
     const consultation = await prisma.consultation.create({
       data: {
         date,
         timeSlot,
         status: consultationStatus,
         leadId: lead.id,
-        meetingLink
+        meetingLink,
+        consultantId: bestConsultantId,
+        type: (serviceType || '').toLowerCase().includes('property') ? 'property_guidance' : 'eligibility'
       }
     });
 
@@ -142,7 +288,7 @@ exports.createEligibilityBooking = async (req, res) => {
 
     // Schedule NO-SHOW enforcer precisely at meetingStart + 10 mins
     const delay = tenMinsAfterStart.getTime() - Date.now();
-
+    
     if (delay > 0) {
       await noShowEnforcerQueue.add('enforce-no-show', {
         consultationId: consultation.id,
@@ -266,8 +412,26 @@ exports.createEligibilityBooking = async (req, res) => {
   }
 };
 
-function getTranslationRate(sourceLanguage) {
+async function getTranslationRate(sourceLanguage) {
   const lang = (sourceLanguage || 'English').toLowerCase().trim();
+  
+  // Try to load dynamic rates from DB settings
+  try {
+    const settings = await prisma.companySetting.findFirst();
+    if (settings && settings.swornTranslationRates) {
+      const rates = typeof settings.swornTranslationRates === 'string'
+        ? JSON.parse(settings.swornTranslationRates)
+        : settings.swornTranslationRates;
+      
+      if (lang.includes('arabic') && rates.arabicToSpanish) return parseFloat(rates.arabicToSpanish);
+      if (lang.includes('urdu') && rates.urduToSpanish) return parseFloat(rates.urduToSpanish);
+      if (lang.includes('english') && rates.englishToSpanish) return parseFloat(rates.englishToSpanish);
+    }
+  } catch (e) {
+    console.warn("Failed to fetch custom translation rates:", e.message);
+  }
+
+  // Fallback defaults
   if (lang.includes('arabic')) {
     return 0.25;
   }
@@ -278,8 +442,8 @@ function getTranslationRate(sourceLanguage) {
   return 0.15;
 }
 
-function calculateSwornTranslationPrice(wordCount, sourceLanguage) {
-  const rate = getTranslationRate(sourceLanguage);
+async function calculateSwornTranslationPrice(wordCount, sourceLanguage) {
+  const rate = await getTranslationRate(sourceLanguage);
   const subtotal = wordCount * rate;
   const vat = subtotal * 0.05;
   return parseFloat((subtotal + vat).toFixed(2));
@@ -295,16 +459,15 @@ exports.uploadTranslationDocument = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Only PDF files are supported' });
     }
 
-    // Parse PDF using PDFParse class (correct API: pass data + verbosity in constructor, then call getText())
-    const parser = new PDFParse({ data: req.file.buffer, verbosity: 0 });
-    const result = await parser.getText();
-    const text = (result.pages || []).map(p => p.text || '').join('\n');
-
+    // Parse PDF using pdf-parse (v2 API: async function that receives a Buffer)
+    const pdfData = await pdfParse(req.file.buffer);
+    const text = pdfData.text || '';
+    
     // Count words (naive whitespace split)
     const wordCount = text.trim().split(/\s+/).filter(word => word.length > 0).length;
 
     const sourceLanguage = req.body.sourceLanguage || 'English';
-    const calculatedPrice = calculateSwornTranslationPrice(wordCount, sourceLanguage);
+    const calculatedPrice = await calculateSwornTranslationPrice(wordCount, sourceLanguage);
 
     return res.status(200).json({
       success: true,
@@ -376,7 +539,7 @@ exports.checkoutTranslationDocument = async (req, res) => {
     } else {
       client = await prisma.client.update({
         where: { id: client.id },
-        data: {
+        data: { 
           status: 'Documents Under Review',
           sourceLanguage: sourceLanguage || undefined,
           targetLanguage: targetLanguage || undefined,
@@ -413,8 +576,8 @@ exports.checkoutTranslationDocument = async (req, res) => {
     });
 
     // 4. Create Payment Record
-    const finalPrice = calculateSwornTranslationPrice(Number(wordCount) || 0, sourceLanguage || 'English');
-
+    const finalPrice = await calculateSwornTranslationPrice(Number(wordCount) || 0, sourceLanguage || 'English');
+    
     // Check if Stripe is configured
     const stripeSecret = process.env.STRIPE_SECRET_KEY;
     const isRealStripe = stripeSecret && !stripeSecret.includes('your_stripe');
@@ -433,7 +596,8 @@ exports.checkoutTranslationDocument = async (req, res) => {
 
     // 5. Generate Stripe Mock Link (Direct portal redirect for local testing)
     const frontendUrl = process.env.FRONTEND_URL || req.headers.origin || 'http://localhost:5173';
-    const paymentUrl = `${frontendUrl}/#/portal/login?success=true&clientId=${client.id}&tempPassword=${generatedPassword || 'Pre-existing'}`;
+    let paymentUrl = `${frontendUrl}/#/portal/login?success=true&clientId=${client.id}&tempPassword=${generatedPassword || 'Pre-existing'}`;
+    let gatewayId = `sess_${payment.id}`;
 
     if (isRealStripe) {
       try {

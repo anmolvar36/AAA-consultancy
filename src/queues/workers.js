@@ -30,9 +30,24 @@ const setupWorkers = () => {
     const { phone, email, name, message } = job.data;
     
     // Auto-reply logic for Meta/WhatsApp Click ads or website forms
-    if (job.name === 'process-meta-message' || job.name === 'process-twilio-message' || job.name === 'process-tiktok-lead') {
+    if (job.name === 'process-meta-message' || job.name === 'process-twilio-message' || job.name === 'process-tiktok-lead' || job.name === 'process-telegram-message') {
       try {
-        if (job.name === 'process-meta-message' || job.name === 'process-twilio-message') {
+        if (job.name === 'process-telegram-message') {
+          const { chatId, name, message: msgText } = job.data;
+          console.log(`[Telegram Worker] Processing message from Telegram user: ${name}`);
+          
+          const telegramService = require('../services/telegramService');
+          const lowerText = (msgText || '').toLowerCase();
+          let responseText = `Hi ${name || 'there'}! Thanks for messaging our Telegram Bot. 🇪🇸\n\nFor Spain Visa & Relocation services details, type /spain.\nFor booking a Free Eligibility Assessment, type /book.`;
+          
+          if (lowerText.includes('/spain') || lowerText.includes('visa')) {
+            responseText = `<b>Spain Relocation Pathways</b> ✈️\n\nWe specialize in:\n• Digital Nomad Visa (DNV)\n• Non-Lucrative Visa (NLV)\n• Golden Visa (Property Investment)\n• Student & Schengen Visas\n\nReply /book to secure an intake slot with our advisors.`;
+          } else if (lowerText.includes('/book') || lowerText.includes('book') || lowerText.includes('assess')) {
+            responseText = `<b>Book Assessment</b> 📅\n\nPlease secure your consultation call using this link: https://aaabusinessconsultancy.com/book-assessment`;
+          }
+          
+          await telegramService.sendTelegramMessage(chatId, responseText);
+        } else if (job.name === 'process-meta-message' || job.name === 'process-twilio-message') {
           // Process inbound user message via the Chatbot
           const chatbotService = require('../services/chatbotService');
           await chatbotService.handleChatbotMessage(phone, name || 'Applicant', message || '');
@@ -69,6 +84,27 @@ const setupWorkers = () => {
         }
       } catch (err) {
         console.error('Failed to process incoming communications webhook job:', err);
+        throw err;
+      }
+    } else if (job.name === 'process-meta-comment') {
+      try {
+        const { commentId, senderName, message, platform } = job.data;
+        console.log(`[Worker] Processing comment from ${senderName} on ${platform}: ${message}`);
+        
+        // Simulates checking if comment is asking for info
+        const lowerMsg = (message || '').toLowerCase();
+        const asksForInfo = ['visa', 'spain', 'info', 'price', 'how', 'eligible', 'help', 'cost'].some(kw => lowerMsg.includes(kw));
+        
+        if (asksForInfo) {
+          console.log(`[Worker] Comment matching criteria for auto-reply on ${platform}. Sending simulated public reply.`);
+          // In production, we call Facebook Graph API to reply:
+          // await axios.post(`https://graph.facebook.com/v17.0/${commentId}/comments`, { message: ... })
+          
+          // Log reply simulation
+          console.log(`[Auto-Reply Simulated] "Hi @${senderName}, thank you for reaching out! We've sent you a DM to get started, or you can book an assessment directly here: https://aaabusinessconsultancy.com/book-assessment"`);
+        }
+      } catch (err) {
+        console.error('Failed to process meta comment auto-reply job:', err);
         throw err;
       }
     }

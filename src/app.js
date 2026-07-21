@@ -42,7 +42,28 @@ io.on('connection', (socket) => {
 });
 
 // Middleware
-app.use(cors());
+//app.use(cors());
+const allowedOrigins = [
+  "https://aaa-crm-service.netlify.app",
+  "http://localhost:5173",
+  "http://localhost:5174"
+];
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // Allow requests without origin (Postman, mobile apps, etc.)
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error("Not allowed by CORS"));
+    },
+    credentials: true
+  })
+);
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

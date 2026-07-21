@@ -176,7 +176,7 @@ const updateOutcome = async (req, res) => {
                 msgToSend = `Hello *${clientName}*,\n\nThank you for attending your Free Spain Visa Eligibility Assessment. 🎉\n\nBased on our assessment, you are *ELIGIBLE* to proceed!\n\nPlease select your preferred Spanish Residency service package to initiate processing:\n\n*OPTION B: Full Processing (End-to-End)*\n- Base Fee: €3,500\n- Add applicant: €500\n- 50% Refund Guarantee if rejected\n\n*OPTION C: Premium Relocation*\n- Base Fee: €4,750\n- Add applicant: €750\n- 50% Refund Guarantee + settlement help in Spain\n\n*OPTION D: Administrative Relocation*\n- Base Fee: €1,750\n- Add applicant: €500\n\nTo select your package and check out, please click the secure link below:\n🔗 ${checkoutLink}`;
               }
 
-              await sendCustomWhatsApp(clientRecord.phone, msgToSend);
+              sendCustomWhatsApp(clientRecord.phone, msgToSend).catch(err => console.error('[BG-WA] Eligible notification failed:', err.message));
               console.log(`[Auto-WhatsApp] Sent ${isPropertyService ? 'property follow-up' : 'package options'} to client ${clientRecord.phone}`);
             } catch (err) {
               console.error('[Auto-WhatsApp] Failed to send WhatsApp message:', err.message);
@@ -209,7 +209,7 @@ const updateOutcome = async (req, res) => {
         console.error('[Blacklist] Failed to insert blacklist record:', dbErr.message);
       }
 
-      // Send No Show WhatsApp and Email
+      // Send No Show WhatsApp and Email (fire-and-forget — non-blocking)
       try {
         const { sendCustomWhatsApp } = require('../services/chatbotService');
         const clientName = `${updatedLead.firstName} ${updatedLead.lastName}`;
@@ -217,10 +217,9 @@ const updateOutcome = async (req, res) => {
         
         const noShowMsg = `Hello *${clientName}*,\n\nYour Free Eligibility Assessment has been automatically cancelled because you did not join the meeting within 10 minutes of the scheduled start time.\n\nDue to our no-show policy, we are unable to reschedule another Free Eligibility Assessment. You are welcome to review our services, packages, requirements, and application process by visiting the link below:\n\nServices & Packages: https://aaabusinessconsultancy.com/services-and-packages/\n\nIf you decide to proceed, we offer professional case assessment which is only *€250* including dedicated One-to-One Case Review. You can checkout here:\n🔗 ${paymentLink}`;
         
-        await sendCustomWhatsApp(updatedLead.phone, noShowMsg);
+        sendCustomWhatsApp(updatedLead.phone, noShowMsg).catch(err => console.error('[BG-WA] No Show WA failed:', err.message));
         
-        // Also send Email
-        await sendEmail({
+        sendEmail({
           to: updatedLead.email,
           subject: 'Your Spain Visa Consultation Cancellation - AAA Business Consultancy',
           html: `
@@ -231,10 +230,10 @@ const updateOutcome = async (req, res) => {
             <p>If you decide to proceed, we offer professional case assessment which is only <strong>€250</strong> including a dedicated One-to-One Case Review. You can checkout using this link: <a href="${paymentLink}">${paymentLink}</a></p>
             <p>Thank you for your understanding.</p>
           `
-        });
-        console.log(`[Auto-NoShow] Sent no-show notifications to ${updatedLead.email}`);
+        }).catch(err => console.error('[BG-Email] No Show email failed:', err.message));
+        console.log(`[Auto-NoShow] Dispatched no-show notifications to ${updatedLead.email}`);
       } catch (err) {
-        console.error('[Auto-NoShow] Failed to send no-show notifications:', err.message);
+        console.error('[Auto-NoShow] Failed to dispatch no-show notifications:', err.message);
       }
     }
 
@@ -245,7 +244,7 @@ const updateOutcome = async (req, res) => {
         data: { status: 'Cancelled' }
       });
 
-      // Send Rebook link immediately
+      // Send Rebook link (fire-and-forget — non-blocking)
       try {
         const { sendCustomWhatsApp } = require('../services/chatbotService');
         const clientName = `${updatedLead.firstName} ${updatedLead.lastName}`;
@@ -253,10 +252,9 @@ const updateOutcome = async (req, res) => {
         
         const cancelMsg = `Hello *${clientName}*,\n\nYour Spain Visa Consultation has been cancelled. You can easily rebook your free Eligibility Assessment at any time using the link below:\n\n🔗 ${rebookLink}`;
         
-        await sendCustomWhatsApp(updatedLead.phone, cancelMsg);
+        sendCustomWhatsApp(updatedLead.phone, cancelMsg).catch(err => console.error('[BG-WA] Cancel WA failed:', err.message));
         
-        // Also send Email
-        await sendEmail({
+        sendEmail({
           to: updatedLead.email,
           subject: 'Spain Visa Consultation Cancelled - Rebook Now',
           html: `
@@ -266,10 +264,10 @@ const updateOutcome = async (req, res) => {
             <p><a href="${rebookLink}" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">Rebook Consultation</a></p>
             <p>Thank you!</p>
           `
-        });
-        console.log(`[Auto-Cancel] Sent cancellation rebook link to ${updatedLead.email}`);
+        }).catch(err => console.error('[BG-Email] Cancel email failed:', err.message));
+        console.log(`[Auto-Cancel] Dispatched cancellation rebook link to ${updatedLead.email}`);
       } catch (err) {
-        console.error('[Auto-Cancel] Failed to send cancellation notifications:', err.message);
+        console.error('[Auto-Cancel] Failed to dispatch cancellation notifications:', err.message);
       }
     }
 
@@ -300,28 +298,35 @@ const respondToConsultation = async (req, res) => {
     }
 
     let meetingLink = existingConsultation.meetingLink;
-    if (action === 'accept' && !meetingLink && zoomService.isConfigured) {
-      try {
-        let startTimeISO = new Date().toISOString();
-        if (existingConsultation.date) {
-          const timeStr = existingConsultation.timeSlot && existingConsultation.timeSlot.includes(':') 
-            ? existingConsultation.timeSlot 
-            : '10:00';
-          const dateObj = new Date(`${existingConsultation.date}T${timeStr}`);
-          if (!isNaN(dateObj.getTime())) {
-            startTimeISO = dateObj.toISOString();
+    if (action === 'accept') {
+      // Always generate a fresh Zoom meeting link when agent accepts
+      if (zoomService.isConfigured) {
+        try {
+          let startTimeISO = new Date().toISOString();
+          if (existingConsultation.date) {
+            const timeStr = existingConsultation.timeSlot && existingConsultation.timeSlot.includes(':') 
+              ? existingConsultation.timeSlot 
+              : '10:00';
+            const dateObj = new Date(`${existingConsultation.date}T${timeStr}`);
+            if (!isNaN(dateObj.getTime())) {
+              startTimeISO = dateObj.toISOString();
+            }
           }
+          const zoomMeeting = await zoomService.createZoomMeeting({
+            topic: `Eligibility Assessment for Lead ${existingConsultation.leadId || ''}`,
+            startTime: startTimeISO,
+            durationMinutes: existingConsultation.durationMinutes || 30
+          });
+          if (zoomMeeting) {
+            meetingLink = zoomMeeting.joinUrl;
+          }
+        } catch (zoomErr) {
+          console.error('Failed to create Zoom meeting on accept:', zoomErr.message);
         }
-        const zoomMeeting = await zoomService.createZoomMeeting({
-          topic: `Eligibility Assessment for Lead ${existingConsultation.leadId || ''}`,
-          startTime: startTimeISO,
-          durationMinutes: existingConsultation.durationMinutes || 30
-        });
-        if (zoomMeeting) {
-          meetingLink = zoomMeeting.joinUrl;
-        }
-      } catch (zoomErr) {
-        console.error('Failed to create Zoom meeting on accept:', zoomErr.message);
+      }
+      // Fallback: generate a placeholder link if Zoom not configured or failed
+      if (!meetingLink) {
+        meetingLink = 'https://zoom.us/j/' + Math.floor(100000000 + Math.random() * 900000000);
       }
     }
 

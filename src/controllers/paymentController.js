@@ -162,8 +162,8 @@ const updatePaymentStatus = async (req, res) => {
             const clientName = `${clientObj.firstName} ${clientObj.lastName}`;
             const amountPaid = payment.amount - (payment.discount || 0);
 
-            await sendCustomWhatsApp(clientObj.phone, `🎉 *Payment Received & Confirmed!*\n\nDear *${clientName}*,\n\nWe have successfully received your payment of *€${amountPaid.toLocaleString()}* for your Spain Relocation Package.\n\nYour Client Portal is now fully active for document uploads and progression tracking:\n🔗 ${portalLink}\n\nThank you for choosing AAA Business Consultancy!`);
-            console.log(`[Auto-WhatsApp Payment Receipt] Sent receipt to ${clientObj.phone}`);
+            sendCustomWhatsApp(clientObj.phone, `🎉 *Payment Received & Confirmed!*\n\nDear *${clientName}*,\n\nWe have successfully received your payment of *€${amountPaid.toLocaleString()}* for your Spain Relocation Package.\n\nYour Client Portal is now fully active for document uploads and progression tracking:\n🔗 ${portalLink}\n\nThank you for choosing AAA Business Consultancy!`).catch(err => console.error('[BG-WA] Payment receipt WA failed:', err.message));
+              console.log(`[Auto-WhatsApp Payment Receipt] Dispatched receipt to ${clientObj.phone}`);
           }
         }
       } catch (err) {
@@ -179,33 +179,62 @@ const updatePaymentStatus = async (req, res) => {
 const getRefundRequests = async (req, res) => {
   try {
     const refunds = await prisma.refundRequest.findMany({
-      include: { client: { select: { firstName: true, lastName: true } } },
+      include: { 
+        client: { 
+          select: { 
+            id: true, 
+            firstName: true, 
+            lastName: true, 
+            email: true, 
+            phone: true, 
+            serviceType: true,
+            payments: {
+              where: { status: 'Paid' }
+            }
+          } 
+        } 
+      },
       orderBy: { createdAt: 'desc' }
     });
     
-    const mapped = refunds.map(r => ({
-      id: r.id,
-      clientId: r.clientId,
-      clientName: r.client ? `${r.client.firstName} ${r.client.lastName}` : 'Unknown',
-      category: r.category,
-      amount: r.amount,
-      date: r.createdAt.toISOString().split('T')[0],
-      status: r.status,
-      reason: r.reason
-    }));
+    const mapped = refunds.map(r => {
+      const clientPaidTotal = (r.client?.payments || []).reduce((sum, p) => sum + p.amount, 0);
+      return {
+        id: r.id,
+        clientId: r.clientId,
+        clientName: r.client ? `${r.client.firstName} ${r.client.lastName}` : 'Unknown',
+        clientEmail: r.client?.email || '',
+        clientPhone: r.client?.phone || '',
+        serviceType: r.client?.serviceType || 'Visa Package',
+        totalPaidAmount: clientPaidTotal,
+        category: r.category,
+        amount: r.amount,
+        date: r.createdAt.toISOString().split('T')[0],
+        status: r.status,
+        reason: r.reason,
+        proofUrl: r.proofUrl || null,
+        bankAccountName: r.bankAccountName || '',
+        bankIban: r.bankIban || '',
+        bankSwift: r.bankSwift || '',
+        payoutMethod: r.payoutMethod || null,
+        transactionRef: r.transactionRef || null,
+        adminNotes: r.adminNotes || ''
+      };
+    });
     
     res.json(mapped);
   } catch (error) {
+    console.error('Error fetching refunds:', error);
     res.status(500).json({ message: 'Server error fetching refunds' });
   }
 };
 
 const createRefundRequest = async (req, res) => {
   try {
-    const { clientId, category, reason, amount } = req.body;
+    const { clientId, category, reason, amount, proofUrl, bankAccountName, bankIban, bankSwift } = req.body;
     let refundAmount = Number(amount) || 0;
     
-    if (category === 'Visa Rejection') {
+    if (category === 'Visa Rejection' || category.includes('Visa Rejection')) {
       const payments = await prisma.payment.findMany({
         where: { clientId, status: 'Paid' }
       });
@@ -219,12 +248,17 @@ const createRefundRequest = async (req, res) => {
         category,
         reason,
         amount: refundAmount,
+        proofUrl: proofUrl || null,
+        bankAccountName: bankAccountName || null,
+        bankIban: bankIban || null,
+        bankSwift: bankSwift || null,
         status: 'Pending Review'
       }
     });
     
     res.status(201).json(refund);
   } catch (error) {
+    console.error('Error creating refund request:', error);
     res.status(500).json({ message: 'Server error creating refund request' });
   }
 };
@@ -232,15 +266,91 @@ const createRefundRequest = async (req, res) => {
 const updateRefundStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body;
+    const { status, payoutMethod, transactionRef, adminNotes } = req.body;
     
+    const updateData = { status };
+    if (payoutMethod) updateData.payoutMethod = payoutMethod;
+    if (transactionRef) updateData.transactionRef = transactionRef;
+    if (adminNotes !== undefined) updateData.adminNotes = adminNotes;
+
     const refund = await prisma.refundRequest.update({
       where: { id },
-      data: { status }
+      data: updateData,
+      include: { client: true }
     });
+
+    // Create AuditLog entry for full audit history tracking
+    try {
+      const adminUser = req.user ? req.user.fullName || req.user.email : 'Super Admin';
+      const clientName = refund.client ? `${refund.client.firstName} ${refund.client.lastName}` : 'Client';
+      await prisma.auditLog.create({
+        data: {
+          action: `Refund Status Updated to '${status}' (${refund.payoutMethod || 'Direct'} - €${refund.amount.toLocaleString()} - Ref: ${refund.transactionRef || 'N/A'}) for ${clientName}`,
+          performedBy: adminUser,
+          details: `Refund Request #${refund.id.substring(0, 8)} updated by ${adminUser}. Client: ${clientName}, Category: ${refund.category}, Amount: €${refund.amount}. Admin Notes: ${adminNotes || 'None'}`
+        }
+      });
+    } catch (auditErr) {
+      console.error('Failed to record AuditLog entry:', auditErr.message);
+    }
+
+    // If status is updated to Processed, update payment records status to 'Refunded' and dispatch Automated Email Receipt
+    if (status === 'Processed' && refund.client) {
+      try {
+        await prisma.payment.updateMany({
+          where: { clientId: refund.clientId, status: 'Paid' },
+          data: { status: 'Refunded' }
+        });
+      } catch (payErr) {
+        console.error('Failed to update payment status to Refunded:', payErr);
+      }
+
+      // Fire-and-forget Email Receipt Dispatch
+      const { sendEmail } = require('../services/emailService');
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+      const portalUrl = `${frontendUrl}/#/portal/documents/${refund.clientId}`;
+
+      const receiptHtml = `
+        <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; color: #2d3748; background-color: #ffffff;">
+          <div style="text-align: center; margin-bottom: 24px; border-bottom: 2px solid #f1f5f9; padding-bottom: 16px;">
+            <h2 style="color: #051A3B; margin: 0; font-size: 24px;">AAA Business Consultancy</h2>
+            <p style="color: #C59B27; font-size: 14px; font-weight: 700; margin: 4px 0 0;">Official Refund Confirmation & Payment Receipt</p>
+          </div>
+          
+          <p>Dear <strong>${refund.client.firstName} ${refund.client.lastName}</strong>,</p>
+          <p>We are writing to confirm that your refund claim under our <strong>Spain Visa 50% Money-Back Guarantee Policy</strong> has been audited and successfully processed.</p>
+          
+          <div style="background-color: #FAF6ED; border: 1px solid rgba(197, 155, 39, 0.4); padding: 20px; margin: 20px 0; border-radius: 8px;">
+            <h4 style="margin: 0 0 12px; color: #051A3B; font-size: 16px;">Receipt Summary (#${refund.id.substring(0, 8)})</h4>
+            <p style="margin: 6px 0; font-size: 14px;"><strong>Refund Category:</strong> ${refund.category}</p>
+            <p style="margin: 6px 0; font-size: 14px;"><strong>Processed Amount:</strong> <span style="color: #dc2626; font-weight: 800; font-size: 18px;">€${refund.amount.toLocaleString()}</span></p>
+            <p style="margin: 6px 0; font-size: 14px;"><strong>Payout Method:</strong> ${refund.payoutMethod || 'Direct Transfer'}</p>
+            <p style="margin: 6px 0; font-size: 14px;"><strong>Transaction / UTR Ref:</strong> <code style="background-color: #e2e8f0; padding: 2px 6px; border-radius: 4px;">${refund.transactionRef || 'N/A'}</code></p>
+            <p style="margin: 6px 0; font-size: 14px;"><strong>Processing Date:</strong> ${new Date().toISOString().split('T')[0]}</p>
+          </div>
+
+          <div style="text-align: center; margin: 28px 0;">
+            <a href="${portalUrl}" style="background-color: #051A3B; color: #E5C058; padding: 12px 28px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 14px; display: inline-block;">
+              View & Download PDF Receipt in Portal
+            </a>
+          </div>
+
+          <p style="font-size: 13px; color: #64748b; margin-top: 30px; border-top: 1px solid #e2e8f0; padding-top: 12px; text-align: center;">
+            This is an automated financial confirmation from AAA Business Consultancy LLC.
+          </p>
+        </div>
+      `;
+
+      sendEmail({
+        to: refund.client.email,
+        subject: `Refund Processed Successfully (€${refund.amount}) - AAA Visa`,
+        html: receiptHtml
+      }).catch(mailErr => console.error('[BG-Email] Refund receipt email failed:', mailErr.message));
+    }
     
     res.json(refund);
   } catch (error) {
+    console.error('Error updating refund status:', error);
     res.status(500).json({ message: 'Server error updating refund status' });
   }
 };

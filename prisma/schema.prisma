@@ -242,37 +242,54 @@ model Document {
 }
 
 model RefundRequest {
-  id          String   @id @default(uuid())
-  clientId    String
-  client      Client   @relation(fields: [clientId], references: [id])
+  id              String   @id @default(uuid())
+  clientId        String
+  client          Client   @relation(fields: [clientId], references: [id])
   
-  category    String
-  reason      String?  @db.Text
-  amount      Float
-  status      String   @default("Pending Review") // Pending Review, Approved, Processed, Rejected
+  category        String
+  reason          String?  @db.Text
+  amount          Float
+  status          String   @default("Pending Review") // Pending Review, Approved, Processed, Rejected
   
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  proofUrl        String?  // URL of uploaded rejection PDF/Image proof
+  bankAccountName String?  // Client Bank Account Holder Name
+  bankIban        String?  // IBAN / Account Number
+  bankSwift       String?  // SWIFT / BIC Code
+  payoutMethod    String?  // "Stripe Automatic" or "Manual Bank Transfer"
+  transactionRef  String?  // Stripe Refund ID or Bank UTR Number
+  adminNotes      String?  @db.Text
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   @@map("refund_requests")
 }
 
 model CompanySetting {
-  id                   String   @id @default(uuid())
-  companyName          String   @default("AAA Business Consultancy LLC")
-  phone                String   @default("+971 50 955 4142")
-  email                String   @default("info@aaabusinessconsultancy.com")
-  address              String   @default("Business Village, Block B, 4th Floor, Office F09, Deira, Dubai, UAE")
-  vatRate              Float    @default(5)
-  vatId                String   @default("VAT-AE-2026-9932")
-  website              String   @default("https://aaabusinessconsultancy.com")
-  incorporationDate    String   @default("2018-05-12")
-  autoAssignConsultant Boolean  @default(true)
-  recordingStorage     String   @default("cloud")
-  swornTranslationRates Json?
-  leadStages           Json?
+  id                        String   @id @default(uuid())
+  companyName               String   @default("AAA Business Consultancy LLC")
+  phone                     String   @default("+971 50 955 4142")
+  email                     String   @default("info@aaabusinessconsultancy.com")
+  address                   String   @default("Business Village, Block B, 4th Floor, Office F09, Deira, Dubai, UAE")
+  vatRate                   Float    @default(5)
+  vatId                     String   @default("VAT-AE-2026-9932")
+  website                   String   @default("https://aaabusinessconsultancy.com")
+  incorporationDate         String   @default("2018-05-12")
+  autoAssignConsultant      Boolean  @default(true)
+  recordingStorage          String   @default("cloud")
+  swornTranslationRates      Json?
+  leadStages                Json?
   
-  updatedAt            DateTime @updatedAt
+  // Master Customization Settings
+  refundGuaranteePercentage Float    @default(50)
+  enableStripeRefunds       Boolean  @default(true)
+  enableManualBankPayouts   Boolean  @default(true)
+  lockClientRefundTab       Boolean  @default(true)
+  requireMeetingAcceptance  Boolean  @default(true)
+  customRefundTerms         String?  @db.Text
+  customizationSettings     Json?
+
+  updatedAt                 DateTime @updatedAt
 
   @@map("company_settings")
 }
@@ -310,8 +327,10 @@ model Template {
 
 model CommunicationLog {
   id                 String   @id @default(uuid())
-  clientId           String
-  client             Client   @relation(fields: [clientId], references: [id])
+  clientId           String?
+  client             Client?  @relation(fields: [clientId], references: [id])
+  phone              String?
+  name               String?
   channel            String   // WHATSAPP, EMAIL, MEETING
   direction          String   // INBOUND, OUTBOUND
   messageId          String?  @unique // Deduplication (Meta/WA Message ID)

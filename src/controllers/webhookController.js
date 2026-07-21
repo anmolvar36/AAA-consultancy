@@ -306,6 +306,17 @@ exports.handleTwilioWebhook = async (req, res) => {
     const name = payload.ProfileName || ''; // Twilio ProfileName if available
 
     if (phone) {
+      // Broadcast live via Socket.io
+      const io = req.app.get('io');
+      if (io) {
+        io.emit('new_whatsapp_message', {
+          phone: phone,
+          name: name || 'Applicant',
+          text: message,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        });
+      }
+
       if (process.env.DISABLE_REDIS === 'true') {
         console.log(`[LOCAL DEV] Redis disabled. Processing chatbot message synchronously.`);
         const chatbotService = require('../services/chatbotService');

@@ -41,15 +41,14 @@ exports.sendWhatsAppMessage = async ({ to, templateName, languageCode = 'en', co
     cleanTo = '+' + cleanTo;
   }
 
-  // Sandbox Mode Whitelist Redirect (Defaults to Active with +917047687998)
+  // Sandbox Mode Whitelist Filter (Defaults to Active with +917047687998)
   const isTestMode = process.env.TEST_MODE !== 'false'; // Defaults to true
   if (isTestMode) {
     const whitelistStr = process.env.TEST_PHONES || '+917047687998';
     const testPhones = whitelistStr.split(',').map(p => p.trim());
     if (!testPhones.includes(cleanTo)) {
-      const primaryTestPhone = testPhones[0] || '+917047687998';
-      console.log(`[TEST MODE] Redirecting template "${templateName}" from recipient ${cleanTo} to test phone ${primaryTestPhone}`);
-      cleanTo = primaryTestPhone;
+      console.log(`[TEST MODE] Blocked automated template "${templateName}" to ${cleanTo} (not whitelisted)`);
+      return { success: true, messageId: 'blocked-sandbox', dryRun: true }; // Drop
     }
   }
 
@@ -98,13 +97,8 @@ exports.sendWhatsAppMessage = async ({ to, templateName, languageCode = 'en', co
       });
 
       // 5. Send message via Twilio API
-      let finalBody = resolvedBody;
-      if (isTestMode && cleanTo !== to.replace(/[^\d+]/g, '')) {
-        finalBody = `[TEST REDIRECT from ${to}]\n\n${resolvedBody}`;
-      }
-
       const message = await client.messages.create({
-        body: finalBody,
+        body: resolvedBody,
         from: TWILIO_WHATSAPP_FROM,
         to: twilioTo
       });

@@ -44,7 +44,7 @@ exports.sendWhatsAppMessage = async ({ to, templateName, languageCode = 'en', co
   // Sandbox Mode Whitelist Filter (Defaults to Active with +917047687998)
   const isTestMode = process.env.TEST_MODE !== 'false'; // Defaults to true
   if (isTestMode) {
-    const whitelistStr = process.env.TEST_PHONES || '+917047687998';
+    const whitelistStr = process.env.TEST_PHONES || '+971524350123';
     const testPhones = whitelistStr.split(',').map(p => p.trim());
     if (!testPhones.includes(cleanTo)) {
       console.log(`[TEST MODE] Blocked automated template "${templateName}" to ${cleanTo} (not whitelisted)`);

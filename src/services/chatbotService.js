@@ -235,7 +235,7 @@ async function sendCustomWhatsApp(phone, messageBody) {
   // Sandbox Mode Whitelist Filter (Defaults to Active with +917047687998)
   const isTestMode = process.env.TEST_MODE !== 'false'; // Defaults to true
   if (isTestMode) {
-    const whitelistStr = process.env.TEST_PHONES || '+917047687998';
+    const whitelistStr = process.env.TEST_PHONES || '+971524350123';
     const testPhones = whitelistStr.split(',').map(p => p.trim());
     if (!testPhones.includes(cleanPhone)) {
       console.log(`[TEST MODE] Blocked automated outbound WhatsApp message to ${cleanPhone} (not whitelisted)`);

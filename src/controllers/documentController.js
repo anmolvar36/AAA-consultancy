@@ -38,11 +38,12 @@ const uploadDocument = async (req, res) => {
     if (isPdf && req.file.path) {
       try {
         const fs = require('fs');
-        const pdfParse = require('pdf-parse');
+        const { extractText } = require('unpdf');
         const dataBuffer = fs.readFileSync(req.file.path);
-        const pdfData = await pdfParse(dataBuffer);
-        if (pdfData && pdfData.text) {
-          const words = pdfData.text.trim().split(/\s+/).filter(w => w.length > 0);
+        const pdfData = await extractText(new Uint8Array(dataBuffer));
+        const text = Array.isArray(pdfData.text) ? pdfData.text.join(' ') : (pdfData.text || '');
+        if (text) {
+          const words = text.trim().split(/\s+/).filter(w => w.length > 0);
           wordCount = words.length;
         }
       } catch (pdfErr) {

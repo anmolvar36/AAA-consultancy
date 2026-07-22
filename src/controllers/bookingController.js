@@ -1,7 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { remindersQueue, noShowEnforcerQueue } = require('../queues/queueSetup');
-const pdfParse = require('pdf-parse');
+const { extractText } = require('unpdf');
 const { sendEmail } = require('../services/emailService');
 const { sendWhatsAppMessage } = require('../services/whatsappService');
 const zoomService = require('../services/zoomService');
@@ -459,9 +459,9 @@ exports.uploadTranslationDocument = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Only PDF files are supported' });
     }
 
-    // Parse PDF using pdf-parse (v2 API: async function that receives a Buffer)
-    const pdfData = await pdfParse(req.file.buffer);
-    const text = pdfData.text || '';
+    // Parse PDF using unpdf extractText
+    const pdfData = await extractText(new Uint8Array(req.file.buffer));
+    const text = Array.isArray(pdfData.text) ? pdfData.text.join(' ') : (pdfData.text || '');
     
     // Count words (naive whitespace split)
     const wordCount = text.trim().split(/\s+/).filter(word => word.length > 0).length;

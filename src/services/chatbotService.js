@@ -232,14 +232,17 @@ async function sendCustomWhatsApp(phone, messageBody) {
     cleanPhone = '+' + cleanPhone;
   }
 
-  // Sandbox Mode Whitelist Filter (Defaults to Active with +917047687998)
+  // Sandbox Mode Whitelist Filter & Redirect (Defaults to Active with +917047687998)
   const isTestMode = process.env.TEST_MODE !== 'false'; // Defaults to true
   if (isTestMode) {
     const whitelistStr = process.env.TEST_PHONES || '+917047687998';
     const testPhones = whitelistStr.split(',').map(p => p.trim());
     if (!testPhones.includes(cleanPhone)) {
-      console.log(`[TEST MODE] Blocked automated outbound WhatsApp message to ${cleanPhone} (not in whitelist: ${whitelistStr})`);
-      return;
+      const primaryTestPhone = testPhones[0] || '+917047687998';
+      console.log(`[TEST MODE] Redirecting automated message from recipient ${cleanPhone} to test phone ${primaryTestPhone}`);
+      
+      messageBody = `[TEST REDIRECT from ${cleanPhone}]\n\n${messageBody}`;
+      cleanPhone = primaryTestPhone;
     }
   }
 

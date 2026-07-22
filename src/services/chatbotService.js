@@ -232,9 +232,11 @@ async function sendCustomWhatsApp(phone, messageBody) {
     cleanPhone = '+' + cleanPhone;
   }
 
-  // Sandbox Mode Whitelist Filter (Defaults to Active with +917047687998)
+  // Sandbox Mode Whitelist Filter (Bypasses for Greetings)
   const isTestMode = process.env.TEST_MODE !== 'false'; // Defaults to true
-  if (isTestMode) {
+  const isGreeting = messageBody.includes('Greetings from *AAA Business Consultancy LLC*');
+
+  if (isTestMode && !isGreeting) {
     const whitelistStr = process.env.TEST_PHONES || '+917047687998';
     const testPhones = whitelistStr.split(',').map(p => p.trim());
     if (!testPhones.includes(cleanPhone)) {

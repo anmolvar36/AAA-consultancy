@@ -69,7 +69,7 @@ exports.getConversations = async (req, res) => {
       });
 
       // Determine Name and Status
-      let name = latestLog.name || 'Applicant';
+      let name = cleanPh;
       let status = 'New Lead';
       let email = null;
 
@@ -81,6 +81,12 @@ exports.getConversations = async (req, res) => {
         name = `${lead.firstName} ${lead.lastName}`;
         status = lead.status || 'New Lead';
         email = lead.email;
+      } else if (latestLog.name && latestLog.name !== 'Applicant') {
+        name = latestLog.name;
+      }
+
+      if (!name || name === 'Applicant' || name.trim() === '') {
+        name = cleanPh;
       }
 
       // Fetch message history for this phone

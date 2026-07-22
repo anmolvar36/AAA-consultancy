@@ -311,7 +311,7 @@ exports.handleTwilioWebhook = async (req, res) => {
       if (io) {
         io.emit('new_whatsapp_message', {
           phone: phone,
-          name: name || 'Applicant',
+          name: (name && name !== 'Applicant') ? name : phone,
           text: message,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         });

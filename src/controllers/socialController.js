@@ -73,19 +73,25 @@ exports.getConversations = async (req, res) => {
       let status = 'New Lead';
       let email = null;
 
-      if (client) {
-        name = `${client.firstName} ${client.lastName}`;
+      const isApplicantPlaceholder = (val) => {
+        if (!val) return true;
+        const normalized = val.trim().toLowerCase();
+        return normalized === '' || normalized === 'applicant' || normalized.includes('applicant');
+      };
+
+      if (client && !isApplicantPlaceholder(`${client.firstName} ${client.lastName}`)) {
+        name = `${client.firstName} ${client.lastName}`.trim();
         status = client.status || 'Under Process';
         email = client.email;
-      } else if (lead) {
-        name = `${lead.firstName} ${lead.lastName}`;
+      } else if (lead && !isApplicantPlaceholder(`${lead.firstName} ${lead.lastName}`)) {
+        name = `${lead.firstName} ${lead.lastName}`.trim();
         status = lead.status || 'New Lead';
         email = lead.email;
-      } else if (latestLog.name && latestLog.name !== 'Applicant') {
-        name = latestLog.name;
+      } else if (latestLog.name && !isApplicantPlaceholder(latestLog.name)) {
+        name = latestLog.name.trim();
       }
 
-      if (!name || name === 'Applicant' || name.trim() === '') {
+      if (isApplicantPlaceholder(name)) {
         name = cleanPh;
       }
 

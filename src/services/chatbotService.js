@@ -12,7 +12,7 @@ const SESSION_TIMEOUT = 3600; // 1 hour session validity
  * @param {string} name - Inbound sender name
  * @param {string} text - Message text content
  */
-exports.handleChatbotMessage = async (phone, name, text) => {
+exports.handleChatbotMessage = async (phone, name, text, messageId = null) => {
   // Normalize phone format
   let cleanPhone = phone.trim();
   if (cleanPhone.startsWith('whatsapp:')) {
@@ -24,7 +24,7 @@ exports.handleChatbotMessage = async (phone, name, text) => {
   }
 
   // Log incoming message to Database
-  await logCommunication(cleanPhone, text, "INBOUND", name);
+  await logCommunication(cleanPhone, text, "INBOUND", name, messageId);
 
   // 1. Check if Live Agent Mode is active for this user
   const agentModeKey = `chatbot:agent_mode:${cleanPhone}`;
@@ -263,7 +263,7 @@ async function sendCustomWhatsApp(phone, messageBody) {
 /**
  * Creates a record in CommunicationLog linked to the matching client.
  */
-async function logCommunication(phone, messageText, direction, name = 'Applicant') {
+async function logCommunication(phone, messageText, direction, name = 'Applicant', messageId = null) {
   try {
     let cleanPhone = phone.trim();
     if (cleanPhone.startsWith('whatsapp:')) {
@@ -287,6 +287,7 @@ async function logCommunication(phone, messageText, direction, name = 'Applicant
         channel: 'WHATSAPP',
         direction: direction,
         content: messageText,
+        messageId: messageId,
         deliveryStatus: 'SENT'
       }
     });

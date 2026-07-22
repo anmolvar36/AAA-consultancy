@@ -8,6 +8,51 @@ const zoomService = require('../services/zoomService');
 const { communicationsQueue } = require('../queues/queueSetup');
 const { processPaymentEvent } = require('../services/paymentService');
 
+const processedMessages = new Set();
+
+const isDuplicateMessage = async (messageId) => {
+  if (!messageId) return false;
+
+  // 1. Check in-memory Set for local deduplication
+  if (processedMessages.has(messageId)) {
+    return true;
+  }
+  processedMessages.add(messageId);
+  setTimeout(() => {
+    processedMessages.delete(messageId);
+  }, 60000); // 1 minute window
+
+  // 2. If Redis is enabled, check Redis for distributed locking/deduplication
+  if (process.env.DISABLE_REDIS !== 'true') {
+    try {
+      const { connection: redis } = require('../queues/connection');
+      if (redis && typeof redis.set === 'function') {
+        const lockKey = `webhook:msg:${messageId}`;
+        const result = await redis.set(lockKey, 'processed', 'EX', 120, 'NX'); // 2 minutes TTL
+        if (result !== 'OK') {
+          return true; // Key already existed, so it is a duplicate
+        }
+      }
+    } catch (err) {
+      console.warn('Deduplication Redis check failed:', err.message);
+    }
+  }
+
+  // 3. Check Database
+  try {
+    const existing = await prisma.communicationLog.findFirst({
+      where: { messageId }
+    });
+    if (existing) {
+      return true;
+    }
+  } catch (err) {
+    console.warn('Deduplication DB check failed:', err.message);
+  }
+
+  return false;
+};
+
 exports.verifyMetaSignature = (req, res, next) => {
   const signature = req.headers['x-hub-signature-256'];
   const appSecret = process.env.META_APP_SECRET;
@@ -54,15 +99,22 @@ exports.handleMetaWebhook = async (req, res) => {
           const contact = value.contacts?.find(c => c.wa_id === phone);
           const name = contact?.profile?.name || 'Applicant';
           const message = msg.text?.body || '';
+          const messageId = msg.id;
+
+          if (messageId && await isDuplicateMessage(messageId)) {
+            console.log(`[Meta Webhook] WhatsApp message ${messageId} is duplicate. Ignoring.`);
+            continue;
+          }
 
           console.log(`Enqueuing WhatsApp message from ${phone} (${name}): ${message}`);
           await communicationsQueue.add('process-meta-message', {
             phone,
             name,
             message,
+            messageId,
             platform: 'whatsapp'
           }, {
-            jobId: msg.id || Date.now().toString()
+            jobId: messageId || Date.now().toString()
           });
         }
       }
@@ -73,15 +125,22 @@ exports.handleMetaWebhook = async (req, res) => {
         const senderId = msg.sender?.id;
         const messageText = msg.message?.text || '';
         const platform = payload.object === 'instagram' ? 'instagram' : 'facebook';
+        const messageId = msg.message?.mid;
+
+        if (messageId && await isDuplicateMessage(messageId)) {
+          console.log(`[Meta Webhook] DM message ${messageId} is duplicate. Ignoring.`);
+          continue;
+        }
         
         console.log(`Enqueuing Direct Message from ${senderId} on ${platform}`);
         await communicationsQueue.add('process-meta-message', {
           phone: senderId,
           name: `Meta User (${platform === 'instagram' ? 'Instagram' : 'Messenger'})`,
           message: messageText,
+          messageId,
           platform
         }, {
-          jobId: msg.message?.mid || Date.now().toString()
+          jobId: messageId || Date.now().toString()
         });
       }
     }
@@ -97,6 +156,11 @@ exports.handleMetaWebhook = async (req, res) => {
           const senderName = val.from?.name || 'Social User';
           const platform = payload.object === 'instagram' ? 'instagram' : 'facebook';
           
+          if (commentId && await isDuplicateMessage(commentId)) {
+            console.log(`[Meta Webhook] Comment ${commentId} is duplicate. Ignoring.`);
+            continue;
+          }
+
           console.log(`Enqueuing Comment update from ${senderName} on ${platform} (${field}): ${commentText}`);
           await communicationsQueue.add('process-meta-comment', {
             commentId,
@@ -304,6 +368,13 @@ exports.handleTwilioWebhook = async (req, res) => {
     const phone = rawFrom.replace('whatsapp:', '');
     const message = payload.Body || '';
     const name = payload.ProfileName || ''; // Twilio ProfileName if available
+    const messageId = payload.MessageSid;
+
+    // Deduplicate incoming Twilio messages
+    if (messageId && await isDuplicateMessage(messageId)) {
+      console.log(`[Twilio Webhook] Message ${messageId} is duplicate. Ignoring.`);
+      return;
+    }
 
     if (phone) {
       // Broadcast live via Socket.io
@@ -320,7 +391,7 @@ exports.handleTwilioWebhook = async (req, res) => {
       if (process.env.DISABLE_REDIS === 'true') {
         console.log(`[LOCAL DEV] Redis disabled. Processing chatbot message synchronously.`);
         const chatbotService = require('../services/chatbotService');
-        chatbotService.handleChatbotMessage(phone, name || 'Applicant', message || '').catch(err => {
+        chatbotService.handleChatbotMessage(phone, name || 'Applicant', message || '', messageId).catch(err => {
           console.error('[LOCAL DEV] Chatbot processing error:', err.message);
         });
       } else {
@@ -329,9 +400,10 @@ exports.handleTwilioWebhook = async (req, res) => {
           phone,
           name,
           message,
+          messageId,
           rawPayload: payload
         }, {
-          jobId: payload.MessageSid || `twilio-msg-${Date.now()}`
+          jobId: messageId || `twilio-msg-${Date.now()}`
         });
         console.log(`Enqueued incoming Twilio WhatsApp message job from ${phone}`);
       }

@@ -27,7 +27,7 @@ const setupWorkers = () => {
   // Communications Worker
   const communicationsWorker = new Worker('communications', async (job) => {
     console.log(`Processing communication job ${job.id} of type: ${job.name}`);
-    const { phone, email, name, message } = job.data;
+    const { phone, email, name, message, messageId } = job.data;
     
     // Auto-reply logic for Meta/WhatsApp Click ads or website forms
     if (job.name === 'process-meta-message' || job.name === 'process-twilio-message' || job.name === 'process-tiktok-lead' || job.name === 'process-telegram-message') {
@@ -50,7 +50,7 @@ const setupWorkers = () => {
         } else if (job.name === 'process-meta-message' || job.name === 'process-twilio-message') {
           // Process inbound user message via the Chatbot
           const chatbotService = require('../services/chatbotService');
-          await chatbotService.handleChatbotMessage(phone, name || 'Applicant', message || '');
+          await chatbotService.handleChatbotMessage(phone, name || 'Applicant', message || '', messageId);
         } else {
           // For process-tiktok-lead (external lead form submission)
           if (phone) {

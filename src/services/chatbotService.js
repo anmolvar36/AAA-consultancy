@@ -223,6 +223,26 @@ exports.handleChatbotMessage = async (phone, name, text, messageId = null) => {
  * Sends free-text responses via Twilio WhatsApp API or logs in Dry-Run mode.
  */
 async function sendCustomWhatsApp(phone, messageBody) {
+  let cleanPhone = phone.trim();
+  if (cleanPhone.startsWith('whatsapp:')) {
+    cleanPhone = cleanPhone.substring(9);
+  }
+  cleanPhone = cleanPhone.replace(/[^\d+]/g, '');
+  if (!cleanPhone.startsWith('+')) {
+    cleanPhone = '+' + cleanPhone;
+  }
+
+  // Sandbox Mode Whitelist Filter (Defaults to Active with +917047687998)
+  const isTestMode = process.env.TEST_MODE !== 'false'; // Defaults to true
+  if (isTestMode) {
+    const whitelistStr = process.env.TEST_PHONES || '+917047687998';
+    const testPhones = whitelistStr.split(',').map(p => p.trim());
+    if (!testPhones.includes(cleanPhone)) {
+      console.log(`[TEST MODE] Blocked automated outbound WhatsApp message to ${cleanPhone} (not in whitelist: ${whitelistStr})`);
+      return;
+    }
+  }
+
   const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
   const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
   const TWILIO_WHATSAPP_FROM = process.env.TWILIO_WHATSAPP_FROM;
@@ -235,7 +255,7 @@ async function sendCustomWhatsApp(phone, messageBody) {
     TWILIO_WHATSAPP_FROM
   );
 
-  const twilioTo = `whatsapp:${phone}`;
+  const twilioTo = `whatsapp:${cleanPhone}`;
 
   if (isConfigured) {
     try {

@@ -178,11 +178,22 @@ const createClient = async (req, res) => {
         .replace(/{username}/g, client.email)
         .replace(/{temp_password}/g, plainPassword);
 
-      sendEmail({
+       sendEmail({
         to: client.email,
         subject: customSubject,
         html: renderedHtml
       }).catch(err => console.error('Failed to send auto welcome email:', err));
+
+      // Also send WhatsApp welcome message with portal credentials
+      if (client.phone) {
+        try {
+          const { sendCustomWhatsApp } = require('../services/chatbotService');
+          const waMsg = `Hello *${clientFullName}*,\n\nWelcome to *AAA Business Consultancy*! 🎉\n\nYour file has been initialized and your Client Portal is now ready.\n\n*Access Credentials:*\n🔗 *Portal Link:* ${portalUrl}\n👤 *Username:* ${client.email}\n🔑 *Temporary Password:* \`${plainPassword}\`\n\n_Note: For security, you will be prompted to change this temporary password immediately upon your first login._`;
+          sendCustomWhatsApp(client.phone, waMsg).catch(err => console.error('Failed to send welcome WhatsApp message:', err.message));
+        } catch (waErr) {
+          console.error('Failed to load welcome WhatsApp service:', waErr.message);
+        }
+      }
     }
 
     if (leadId) {

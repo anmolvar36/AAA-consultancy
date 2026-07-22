@@ -460,21 +460,9 @@ async function sendConsultationNotifications(consultation) {
 
     // 1. Send WhatsApp Message
     try {
-      await sendWhatsAppMessage({
-        to: phone,
-        templateName: 'consultation_scheduled_confirmation',
-        components: [
-          {
-            type: 'body',
-            parameters: [
-              { type: 'text', text: lead.firstName },
-              { type: 'text', text: date },
-              { type: 'text', text: time },
-              { type: 'text', text: link }
-            ]
-          }
-        ]
-      });
+      const { sendCustomWhatsApp } = require('../services/chatbotService');
+      const waMsg = `Hello *${name}*,\n\nYour Spain Visa Consultation with *AAA Business Consultancy* has been scheduled successfully! 🎉\n\n*Appointment Details:*\n📅 *Date:* ${date}\n⏰ *Time:* ${time} (UTC)\n🔗 *Meeting Join Link:* ${link}\n\n_Please join the meeting on time. If you do not join within 10 minutes of the scheduled time, the appointment will be automatically marked as No-Show._`;
+      await sendCustomWhatsApp(phone, waMsg);
     } catch (waErr) {
       console.error('[NOTIFICATIONS] Failed to send WhatsApp confirmation:', waErr.message);
     }

@@ -309,21 +309,9 @@ exports.createEligibilityBooking = async (req, res) => {
 
         // 1. Send WhatsApp Message
         try {
-          await sendWhatsAppMessage({
-            to: phone,
-            templateName: 'consultation_scheduled_confirmation',
-            components: [
-              {
-                type: 'body',
-                parameters: [
-                  { type: 'text', text: firstName },
-                  { type: 'text', text: date },
-                  { type: 'text', text: timeSlot },
-                  { type: 'text', text: link }
-                ]
-              }
-            ]
-          });
+          const { sendCustomWhatsApp } = require('../services/chatbotService');
+          const waMsg = `Hello *${clientName}*,\n\nThank you for booking your Spain Visa Eligibility Assessment! ✈️🎉\n\n*Appointment Details:*\n📅 *Date:* ${date}\n⏰ *Time:* ${timeSlot} (UTC)\n🔗 *Meeting Join Link:* ${link}\n\n_Please join the meeting on time. If you do not join within 10 minutes of the scheduled time, the appointment will be automatically marked as No-Show._`;
+          await sendCustomWhatsApp(phone, waMsg);
         } catch (waErr) {
           console.error('[NOTIFICATIONS] Failed to send WhatsApp confirmation:', waErr.message);
         }

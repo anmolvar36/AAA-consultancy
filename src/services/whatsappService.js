@@ -40,6 +40,18 @@ exports.sendWhatsAppMessage = async ({ to, templateName, languageCode = 'en', co
   if (!cleanTo.startsWith('+')) {
     cleanTo = '+' + cleanTo;
   }
+
+  // Sandbox Mode Whitelist Filter (Defaults to Active with +917047687998)
+  const isTestMode = process.env.TEST_MODE !== 'false'; // Defaults to true
+  if (isTestMode) {
+    const whitelistStr = process.env.TEST_PHONES || '+917047687998';
+    const testPhones = whitelistStr.split(',').map(p => p.trim());
+    if (!testPhones.includes(cleanTo)) {
+      console.log(`[TEST MODE] Blocked automated template "${templateName}" to ${cleanTo} (not whitelisted)`);
+      return { success: true, messageId: 'blocked-sandbox', dryRun: true }; // Drop
+    }
+  }
+
   const twilioTo = `whatsapp:${cleanTo}`;
 
   if (isConfigured) {

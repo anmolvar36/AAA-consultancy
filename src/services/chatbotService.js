@@ -100,6 +100,7 @@ exports.handleChatbotMessage = async (phone, name, text, messageId = null) => {
     }
 
     const greetingMsg = `Greetings from *AAA Business Consultancy LLC*. Thank you for contacting us regarding Spain Visa & Residency Services.✈️✈️`;
+    const menuMsg = `Please select an option from our main menu (1-4):\n\n1️⃣ Spain Visa & Residency Services\n2️⃣ Professional Case Assessment Service\n3️⃣ Property Investment Guidance Service\n4️⃣ Spanish Sworn Translation Services`;
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
     const bookingLink = `${frontendUrl}/#/public/lead-form?source=${encodeURIComponent(detectedSource)}&phone=${encodeURIComponent(cleanPhone)}`;
     const instructionMsg = `To book your Free 20-Minute Eligibility Assessment & Verification, please click the link below to select your preferred date and time:\n\n${bookingLink}`;

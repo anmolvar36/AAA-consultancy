@@ -55,7 +55,25 @@ const createLead = async (req, res) => {
     const cleanPhone = phone ? phone.replace(/\D/g, '') : '';
     const matchDigits = cleanPhone.length >= 10 ? cleanPhone.slice(-10) : cleanPhone;
 
-    // Check blacklist first
+    // 1. Check blocked client
+    const blockedClient = await prisma.client.findFirst({
+      where: {
+        isBlocked: true,
+        OR: [
+          { email: email.toLowerCase() },
+          ...(matchDigits ? [{ phone: { contains: matchDigits } }] : [])
+        ]
+      }
+    });
+
+    if (blockedClient) {
+      return res.status(403).json({
+        code: 'BLOCKED',
+        message: 'Your booking cannot be processed automatically. Contact support.'
+      });
+    }
+
+    // 2. Check blacklist first
     const blacklisted = await prisma.blacklistedClient.findFirst({
       where: {
         OR: [
@@ -72,20 +90,32 @@ const createLead = async (req, res) => {
 
     if (blacklisted || matchesBlacklistByName) {
       return res.status(403).json({
+        code: 'BLACKLISTED',
         message: 'This profile is not eligible for further eligibility assessments due to a previous missed appointment.'
       });
     }
     
-    let lead = null;
-    if (matchDigits) {
-      lead = await prisma.lead.findFirst({
-        where: {
-          phone: {
-            contains: matchDigits
-          }
+    // 3. Check for Duplicate Active Bookings
+    const activeLead = await prisma.lead.findFirst({
+      where: {
+        OR: [
+          { email: email.toLowerCase() },
+          ...(matchDigits ? [{ phone: { contains: matchDigits } }] : [])
+        ],
+        status: {
+          notIn: ['Lost Lead', 'Spam', 'Cold Lead', 'No Show', 'Completed']
         }
+      }
+    });
+
+    if (activeLead) {
+      return res.status(409).json({
+        code: 'DUPLICATE_LEAD',
+        message: 'You already have an active booking or application under this email/phone.'
       });
     }
+
+    let lead = null;
 
     // Smart auto-assign: prefer property specialist for Property Investment leads
     const finalServiceType = serviceType || serviceId || '';
@@ -105,10 +135,6 @@ const createLead = async (req, res) => {
       // Normal round-robin assignment for non-property leads
       const consultants = await prisma.user.findMany({ where: { role: 'consultant' } });
       assignedToId = consultants.length > 0 ? consultants[0].id : null;
-    }
-
-    if (lead) {
-      return res.status(400).json({ message: 'Number already exists' });
     }
 
     // Create new lead

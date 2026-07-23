@@ -212,10 +212,22 @@ const updateOutcome = async (req, res) => {
       // Send No Show WhatsApp and Email (fire-and-forget — non-blocking)
       try {
         const { sendCustomWhatsApp } = require('../services/chatbotService');
+        const paymentService = require('../services/paymentService');
         const clientName = `${updatedLead.firstName} ${updatedLead.lastName}`;
-        const paymentLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/portal/documents/${updatedLead.clientId || ''}`;
         
-        const noShowMsg = `Hello *${clientName}*,\n\nYour Free Eligibility Assessment has been automatically cancelled because you did not join the meeting within 10 minutes of the scheduled start time.\n\nDue to our no-show policy, we are unable to reschedule another Free Eligibility Assessment. You are welcome to review our services, packages, requirements, and application process by visiting the link below:\n\nServices & Packages: https://aaabusinessconsultancy.com/services-and-packages/\n\nIf you decide to proceed, we offer professional case assessment which is only *€250* including dedicated One-to-One Case Review. You can checkout here:\n🔗 ${paymentLink}`;
+        let paymentLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/portal/documents/${updatedLead.clientId || ''}`;
+        if (updatedLead.clientId) {
+          try {
+            const checkoutUrl = await paymentService.createNoShowCheckoutSession(updatedLead.clientId);
+            if (checkoutUrl) {
+              paymentLink = checkoutUrl;
+            }
+          } catch (stripeErr) {
+            console.error('[No Show] Failed to create Stripe checkout session, falling back to portal:', stripeErr.message);
+          }
+        }
+        
+        const noShowMsg = `Hello *${clientName}*,\n\nYour Free Eligibility Assessment has been automatically cancelled because you did not join the meeting within 10 minutes of the scheduled start time.\n\nDue to our no-show policy, we are unable to reschedule another Free Eligibility Assessment. You are welcome to review our services, packages, requirements, and application process by visiting the link below:\n\nServices & Packages: https://aaabusinessconsultancy.com/services-and-packages/\n\nIf you decide to proceed, we offer professional case assessment which is only *€250* (plus 5% VAT) including dedicated One-to-One Case Review. You can checkout here:\n🔗 ${paymentLink}`;
         
         sendCustomWhatsApp(updatedLead.phone, noShowMsg).catch(err => console.error('[BG-WA] No Show WA failed:', err.message));
         
@@ -227,7 +239,7 @@ const updateOutcome = async (req, res) => {
             <p>Dear ${updatedLead.firstName},</p>
             <p>Your Free Eligibility Assessment has been automatically cancelled because you did not join the meeting within 10 minutes of the scheduled start time.</p>
             <p>Due to our no-show policy, we are unable to reschedule another Free Eligibility Assessment. You are welcome to review our services, packages, requirements, and application process by visiting <a href="https://aaabusinessconsultancy.com/services-and-packages/">Services & Packages</a>.</p>
-            <p>If you decide to proceed, we offer professional case assessment which is only <strong>€250</strong> including a dedicated One-to-One Case Review. You can checkout using this link: <a href="${paymentLink}">${paymentLink}</a></p>
+            <p>If you decide to proceed, we offer professional case assessment which is only <strong>€250</strong> (plus 5% VAT) including a dedicated One-to-One Case Review. You can checkout using this link: <a href="${paymentLink}">${paymentLink}</a></p>
             <p>Thank you for your understanding.</p>
           `
         }).catch(err => console.error('[BG-Email] No Show email failed:', err.message));
@@ -266,6 +278,20 @@ const updateOutcome = async (req, res) => {
           `
         }).catch(err => console.error('[BG-Email] Cancel email failed:', err.message));
         console.log(`[Auto-Cancel] Dispatched cancellation rebook link to ${updatedLead.email}`);
+
+        // Schedule 24-hour delayed rebooking reminder if remindersQueue is active
+        if (remindersQueue && remindersQueue.add) {
+          await remindersQueue.add('cancelled-rebook-reminder', {
+            leadId: updatedLead.id,
+            email: updatedLead.email,
+            phone: updatedLead.phone,
+            firstName: updatedLead.firstName,
+            lastName: updatedLead.lastName
+          }, {
+            delay: 24 * 60 * 60 * 1000 // 24 hours
+          });
+          console.log(`[Auto-Cancel] Scheduled 24-hour rebook reminder for lead ${updatedLead.id}`);
+        }
       } catch (err) {
         console.error('[Auto-Cancel] Failed to dispatch cancellation notifications:', err.message);
       }

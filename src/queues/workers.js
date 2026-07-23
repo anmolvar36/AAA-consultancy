@@ -115,6 +115,49 @@ const setupWorkers = () => {
   // Reminders Worker
   const remindersWorker = new Worker('reminders', async (job) => {
     console.log(`Processing reminder job ${job.id} - ${job.name}`);
+    
+    if (job.name === 'cancelled-rebook-reminder') {
+      const { leadId, email, phone, firstName, lastName } = job.data;
+      const prisma = require('../config/db');
+      
+      try {
+        const lead = await prisma.lead.findUnique({
+          where: { id: leadId }
+        });
+        
+        if (lead && lead.status === 'Cancelled') {
+          const clientName = `${lead.firstName} ${lead.lastName}`;
+          const rebookLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/public/lead-form?id=${lead.id}&rebook=true`;
+          
+          // Send 24h follow-up WhatsApp reminder
+          const { sendCustomWhatsApp } = require('../services/chatbotService');
+          const reminderMsg = `Hello *${clientName}*,\n\nThis is a friendly reminder to reschedule your Spain Visa free consultation. Choose your preferred date and time slot using the link below:\n\n🔗 ${rebookLink}`;
+          await sendCustomWhatsApp(lead.phone, reminderMsg).catch(err => console.error('[BG-WA] Rebook reminder WA failed:', err.message));
+          
+          // Send 24h follow-up Email reminder
+          await sendEmail({
+            to: lead.email,
+            subject: 'Spain Visa Consultation Reminder: Choose Your Slot',
+            html: `
+              <h3>Reschedule Your Free Consultation</h3>
+              <p>Dear ${lead.firstName},</p>
+              <p>We noticed you haven't rescheduled your Spain Visa consultation yet.</p>
+              <p>You can choose your preferred date and time slot using the link below:</p>
+              <p><a href="${rebookLink}" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">Choose Date & Time Slot</a></p>
+              <p>Thank you!</p>
+            `
+          }).catch(err => console.error('[BG-Email] Rebook reminder email failed:', err.message));
+          console.log(`[Auto-Cancel-Reminder] Sent 24h rebook reminder to ${lead.email}`);
+        } else {
+          console.log(`[Auto-Cancel-Reminder] Lead status is no longer Cancelled (current: ${lead?.status}). Skipping reminder.`);
+        }
+      } catch (err) {
+        console.error(`[Auto-Cancel-Reminder] Failed to process cancel reminder for lead ${leadId}:`, err.message);
+        throw err;
+      }
+      return;
+    }
+
     const { toEmail, toPhone, subject, emailHtml, whatsappTemplate, whatsappComponents } = job.data;
 
     try {

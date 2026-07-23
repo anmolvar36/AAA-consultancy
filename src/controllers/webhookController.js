@@ -198,8 +198,106 @@ exports.handleStripeWebhook = async (req, res) => {
   // Return a 200 response to acknowledge receipt of the event
   res.send();
 
-  // Enqueue payment event (We can handle this later in Payment State Machine)
-  await processPaymentEvent(event).catch(console.error);
+  const session = event.data.object;
+  if (event.type === 'checkout.session.completed' && session?.metadata?.type === 'no_show_case_assessment') {
+    const clientId = session.metadata.clientId;
+    const paymentId = session.metadata.paymentId;
+    
+    try {
+      // 1. Update Payment status to Paid
+      await prisma.payment.update({
+        where: { id: paymentId },
+        data: {
+          status: 'Paid',
+          transactionId: session.id,
+          paymentMethod: 'Stripe',
+          totalPaid: session.amount_total ? session.amount_total / 100 : 262.50
+        }
+      });
+
+      // 2. Fetch Client and Lead
+      const client = await prisma.client.findUnique({
+        where: { id: clientId },
+        include: { lead: true }
+      });
+
+      if (client) {
+        // 3. Remove client from blacklistedClient table
+        try {
+          await prisma.blacklistedClient.deleteMany({
+            where: {
+              OR: [
+                { email: client.email.toLowerCase() },
+                { phone: client.phone }
+              ]
+            }
+          });
+          console.log(`[Stripe Webhook] Removed client ${client.email} from blacklist`);
+        } catch (delErr) {
+          console.warn('[Stripe Webhook] Blacklist deletion failed:', delErr.message);
+        }
+
+        // 4. Update Client status
+        await prisma.client.update({
+          where: { id: client.id },
+          data: {
+            status: 'Payment Received',
+            isBlocked: false
+          }
+        });
+
+        if (client.lead) {
+          await prisma.lead.update({
+            where: { id: client.lead.id },
+            data: {
+              status: 'Payment Received'
+            }
+          });
+        }
+
+        // 5. Generate secure JWT token for pre-filled re-booking
+        const jwt = require('jsonwebtoken');
+        const secret = process.env.JWT_SECRET || 'secret123';
+        const prefillToken = jwt.sign(
+          { clientId: client.id, leadId: client.lead?.id },
+          secret,
+          { expiresIn: '2d' } // Link valid for 2 days
+        );
+
+        // 6. Construct re-booking link
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+        const rebookLink = `${frontendUrl}/#/public/booking?token=${prefillToken}`;
+
+        // 7. Dispatch WhatsApp and Email confirmation
+        const { sendCustomWhatsApp } = require('../services/chatbotService');
+        const { sendEmail } = require('../services/emailService');
+
+        const clientName = `${client.firstName} ${client.lastName}`;
+        const messageBody = `Hello *${clientName}*,\n\nWe have successfully received your payment of *€250* (plus 5% VAT) for the Professional Case Assessment. 🎉\n\nYour account has been un-blocked. Please click the link below to select your new date & time slot for the 1-to-1 Case Review (your details are pre-filled):\n🔗 ${rebookLink}`;
+
+        await sendCustomWhatsApp(client.phone, messageBody).catch(err => console.error('[Webhook Stripe] Failed to send re-book WA:', err.message));
+
+        await sendEmail({
+          to: client.email,
+          subject: 'Payment Confirmed - Rebook Your Case Assessment - AAA Business Consultancy',
+          html: `
+            <h3>Payment Successful</h3>
+            <p>Dear ${client.firstName},</p>
+            <p>We have successfully received your payment of <strong>€250</strong> (plus 5% VAT) for the Professional Case Assessment.</p>
+            <p>Your account has been un-blocked. Please reschedule your One-to-One Case Review session by clicking the link below:</p>
+            <p><a href="${rebookLink}">Reschedule Your Consultation Meeting</a></p>
+            <p>Thank you for choosing AAA Business Consultancy!</p>
+          `
+        }).catch(err => console.error('[Webhook Stripe] Failed to send re-book email:', err.message));
+      }
+
+    } catch (err) {
+      console.error('Error handling no_show_case_assessment webhook event:', err);
+    }
+  } else {
+    // Enqueue payment event (We can handle this later in Payment State Machine)
+    await processPaymentEvent(event).catch(console.error);
+  }
 };
 
 exports.handleTikTokWebhook = async (req, res) => {
@@ -284,11 +382,16 @@ async function processZoomRecording(payload) {
         meetingLink: {
           contains: meetingId.toString()
         }
+      },
+      include: {
+        lead: true
       }
     });
     
     if (consultation) {
       console.log(`Found Consultation ID ${consultation.id} for Zoom Meeting ${meetingId}. Saving recordingUrl.`);
+      
+      // 1. Update Consultation record status and recording link
       await prisma.consultation.update({
         where: { id: consultation.id },
         data: {
@@ -296,6 +399,46 @@ async function processZoomRecording(payload) {
           status: 'Completed'
         }
       });
+
+      // 2. Append recording link to the associated Lead notes if present
+      if (consultation.lead) {
+        const lead = consultation.lead;
+        const currentLeadNotes = lead.notes || '';
+        const appendMsg = `\n\n[Zoom Recording - Completed]: ${shareUrl}`;
+        
+        await prisma.lead.update({
+          where: { id: lead.id },
+          data: { notes: currentLeadNotes + appendMsg }
+        });
+
+        // 3. Append to Client profileSummary if lead is linked to a Client
+        if (lead.clientId) {
+          const client = await prisma.client.findUnique({
+            where: { id: lead.clientId }
+          });
+          if (client) {
+            const currentProfileSummary = client.profileSummary || '';
+            await prisma.client.update({
+              where: { id: lead.clientId },
+              data: { profileSummary: currentProfileSummary + appendMsg }
+            });
+          }
+        }
+
+        // 4. Log a Communication History entry under the Client/Lead
+        await prisma.communicationLog.create({
+          data: {
+            clientId: lead.clientId || null,
+            phone: lead.phone || null,
+            name: `${lead.firstName} ${lead.lastName}`.trim(),
+            channel: 'MEETING',
+            direction: 'OUTBOUND',
+            deliveryStatus: 'SENT',
+            content: `Zoom Cloud Recording Completed. Meeting: ${consultation.type || 'Eligibility Assessment'} | Date: ${consultation.date} | Link: ${shareUrl}`,
+          }
+        });
+        console.log(`[processZoomRecording] Successfully linked recording link to Lead ${lead.id} notes and communication logs.`);
+      }
     } else {
       console.warn(`No Consultation record found matching Zoom Meeting ID ${meetingId}`);
     }

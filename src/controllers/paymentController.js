@@ -452,11 +452,52 @@ const createStripeCheckoutSession = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Client not found' });
     }
 
+    // Helper helper to get applicants count
+    const getApplicantsCount = (countStr) => {
+      if (!countStr || countStr === 'Main Only') return 1;
+      const numericVal = parseInt(countStr, 10);
+      if (!isNaN(numericVal) && String(numericVal) === countStr.trim()) {
+        return numericVal;
+      }
+      const match = countStr.match(/Main\s*\+\s*(\d+)/i);
+      if (match) {
+        return 1 + parseInt(match[1], 10);
+      }
+      return 1;
+    };
+
+    // Server-side deduction verification to prevent price tampering
+    let enforcedAmount = Number(amount) || 0;
+    const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+    const paidAssessment = await prisma.payment.findFirst({
+      where: {
+        clientId,
+        status: 'Paid',
+        amount: 262.50, // €250 + 5% VAT
+        createdAt: { gte: fourteenDaysAgo }
+      }
+    });
+
+    if (paidAssessment && ['full_process', 'premium', 'relocation'].includes(packageId)) {
+      const totalApplicants = getApplicantsCount(clientRecord.applicantsCount);
+      const addApplicants = totalApplicants - 1;
+      let baseExpected = 0;
+      if (packageId === 'full_process') baseExpected = 3500 + (addApplicants * 500);
+      else if (packageId === 'premium') baseExpected = 4750 + (addApplicants * 750);
+      else if (packageId === 'relocation') baseExpected = 1750 + (addApplicants * 500);
+
+      const expectedDeducted = Math.max(0, baseExpected - 250);
+      if (enforcedAmount !== expectedDeducted) {
+        console.warn(`[Payment Security] Price tampering detected. Client sent €${enforcedAmount}, expected €${expectedDeducted}. Enforcing correct price.`);
+        enforcedAmount = expectedDeducted;
+      }
+    }
+
     // 1. Create a Pending payment record in the database first
     const payment = await prisma.payment.create({
       data: {
         clientId,
-        amount: Number(amount) || 0,
+        amount: enforcedAmount,
         discount: Number(discount) || 0,
         status: 'Pending',
         dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
@@ -468,7 +509,7 @@ const createStripeCheckoutSession = async (req, res) => {
       const tabbyService = require('../services/tabbyService');
       const sessionData = await tabbyService.createTabbyCheckoutSession({
         clientId,
-        amount: Number(amount) * 1.05, // include VAT
+        amount: enforcedAmount * 1.05, // include VAT
         email: clientRecord.email,
         phone: clientRecord.phone,
         name: `${clientRecord.firstName} ${clientRecord.lastName}`
@@ -493,7 +534,7 @@ const createStripeCheckoutSession = async (req, res) => {
       const tamaraService = require('../services/tamaraService');
       const sessionData = await tamaraService.createTamaraCheckoutSession({
         clientId,
-        amount: Number(amount) * 1.05, // include VAT
+        amount: enforcedAmount * 1.05, // include VAT
         email: clientRecord.email,
         phone: clientRecord.phone,
         name: `${clientRecord.firstName} ${clientRecord.lastName}`

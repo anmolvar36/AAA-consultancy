@@ -686,7 +686,7 @@ exports.checkoutTranslationDocument = async (req, res) => {
 
   } catch (error) {
     console.error('Translation Checkout Error:', error);
-    return res.status(500).json({ success: false, error: 'Internal Server Error during checkout' });
+    return res.status(500).json({ success: false, error: error.message || 'Internal Server Error during checkout' });
   }
 };
 

@@ -748,19 +748,18 @@ exports.checkoutTranslationDocument = async (req, res) => {
       data: { gatewayId }
     });
 
-    if (!isRealStripe) {
-      try {
-        const { sendPaymentSuccessWhatsApp } = require('../services/whatsappService');
-        await sendPaymentSuccessWhatsApp({
-          client,
-          paymentId: payment.id,
-          amount: finalPrice,
-          serviceType: 'Spanish Sworn Translation',
-          generatedPassword: generatedPassword || null
-        });
-      } catch (waErr) {
-        console.error('Failed to trigger mock WhatsApp payment receipt:', waErr.message);
-      }
+    // Trigger automated WhatsApp receipt & portal credentials notification
+    try {
+      const { sendPaymentSuccessWhatsApp } = require('../services/whatsappService');
+      await sendPaymentSuccessWhatsApp({
+        client,
+        paymentId: payment.id,
+        amount: finalPrice,
+        serviceType: 'Spanish Sworn Translation',
+        generatedPassword: generatedPassword || null
+      });
+    } catch (waErr) {
+      console.error('Failed to trigger WhatsApp payment receipt:', waErr.message);
     }
 
     return res.status(201).json({

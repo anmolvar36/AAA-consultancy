@@ -131,13 +131,28 @@ exports.sendPaymentSuccessWhatsApp = async ({ client, paymentId, amount, service
       return;
     }
 
+    const receiptId = paymentId ? `#${paymentId.substring(0, 8)}` : `#PAY-${Date.now()}`;
+
+    // Deduplication check: Avoid sending duplicate receipt messages for the same payment
+    if (paymentId) {
+      const existingLog = await prisma.communicationLog.findFirst({
+        where: {
+          clientId: client.id,
+          content: { contains: receiptId }
+        }
+      });
+      if (existingLog) {
+        console.log(`[Payment Success WhatsApp] Receipt ${receiptId} already logged/sent to client ${client.id}. Skipping duplicate.`);
+        return;
+      }
+    }
+
     const clientName = `${client.firstName || ''} ${client.lastName || ''}`.trim() || 'Valued Client';
     const email = client.email || 'N/A';
     const password = generatedPassword || (client.isTemporaryPassword ? 'Check your registered email' : 'Your registered password');
     const service = serviceType || client.serviceType || 'Spanish Sworn Translation';
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
     const portalUrl = `${frontendUrl}/#/portal/login`;
-    const receiptId = paymentId ? `#${paymentId.substring(0, 8)}` : `#PAY-${Date.now()}`;
     const formattedAmount = Number(amount || 0).toFixed(2);
 
     const messageBody = `🎉 *Payment Successful & Confirmed!*

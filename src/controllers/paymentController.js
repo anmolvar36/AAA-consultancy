@@ -43,7 +43,7 @@ const generatePaymentLink = async (req, res) => {
     });
 
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-    let paymentUrl = `${frontendUrl}/#/public/checkout?id=${payment.id}`;
+    let paymentUrl = `${frontendUrl}/#/portal/documents/${clientId}`;
 
     // 1. Stripe Live Checkout Session Generator
     if (stripe && (gateway === 'stripe' || !gateway)) {
@@ -63,7 +63,7 @@ const generatePaymentLink = async (req, res) => {
           }],
           mode: 'payment',
           success_url: `${frontendUrl}/#/portal/login?payment=success&id=${payment.id}`,
-          cancel_url: `${frontendUrl}/#/public/checkout?id=${payment.id}&cancelled=true`,
+          cancel_url: `${frontendUrl}/#/portal/documents/${clientId}?cancelled=true`,
           client_reference_id: payment.id
         });
 
@@ -99,8 +99,8 @@ const generatePaymentLink = async (req, res) => {
           merchant_code: process.env.TABBY_MERCHANT_CODE || 'AAA_CONSULTANCY',
           merchant_urls: {
             success: `${frontendUrl}/#/portal/login?payment=success&id=${payment.id}`,
-            cancel: `${frontendUrl}/#/public/checkout?id=${payment.id}&cancelled=true`,
-            failure: `${frontendUrl}/#/public/checkout?id=${payment.id}&failed=true`
+            cancel: `${frontendUrl}/#/portal/documents/${clientId}?cancelled=true`,
+            failure: `${frontendUrl}/#/portal/documents/${clientId}?failed=true`
           }
         }, {
           headers: {

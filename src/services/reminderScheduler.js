@@ -28,7 +28,7 @@ const startReminderScheduler = () => {
           });
           if (!sentLog) {
             await sendPaymentReminder(client, '2h', 'Reminder: Complete Your Spain Visa Package Payment ✈️', 
-              `Please complete your payment within today to initiate your Spain residency processing. Checkout link: ${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/public/checkout?id=${client.id}`
+              `Please complete your payment within today to initiate your Spain residency processing. Checkout link: ${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/portal/documents/${client.id}`
             );
           }
         }
@@ -40,7 +40,7 @@ const startReminderScheduler = () => {
           });
           if (!sentLog) {
             await sendPaymentReminder(client, '24h', 'Action Required: Finish Your Spain Relocation Setup 🇪🇸',
-              `It has been 24 hours. Don't lose access to your assigned specialist. Complete payment: ${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/public/checkout?id=${client.id}`
+              `It has been 24 hours. Don't lose access to your assigned specialist. Complete payment: ${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/portal/documents/${client.id}`
             );
           }
         }
@@ -52,7 +52,7 @@ const startReminderScheduler = () => {
           });
           if (!sentLog) {
             await sendPaymentReminder(client, '2d', 'Reminder: Confirm Your Application Details & Invoice 🧾',
-              `Your invoice is pending payment for 2 days. Final link: ${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/public/checkout?id=${client.id}`
+              `Your invoice is pending payment for 2 days. Final link: ${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/portal/documents/${client.id}`
             );
           }
         }

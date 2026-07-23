@@ -74,23 +74,31 @@ const processPaymentEvent = async (event) => {
         if (payment.client) {
           const isTranslation = (payment.client.serviceType || '').includes('Translation') || (payment.client.serviceId || '').includes('translation');
           const packageId = session.metadata?.packageId;
+          const isNoShowAssessment = session.metadata?.type === 'no_show_case_assessment' || packageId === 'option_a' || packageId === 'Option A';
+
           const updatedClient = await tx.client.update({
             where: { id: payment.clientId },
             data: {
-              documentUploadAllowed: true,
+              documentUploadAllowed: !isNoShowAssessment, // Keep locked if it's only €250 case assessment
               packageId: packageId || undefined,
-              status: isTranslation ? 'Documents Under Review' : 'Payment Received',
-              visaStatus: isTranslation ? 'Not Started' : 'Document Preparation'
+              status: isNoShowAssessment 
+                ? 'Partially Paid' 
+                : (isTranslation ? 'Documents Under Review' : 'Payment Received'),
+              visaStatus: isNoShowAssessment
+                ? 'Not Started'
+                : (isTranslation ? 'Not Started' : 'Document Preparation')
             }
           });
 
-          // Send Checklist Email
-          try {
-            const { sendVisaChecklist } = require('./emailService');
-            await sendVisaChecklist(updatedClient.email, `${updatedClient.firstName} ${updatedClient.lastName}`, updatedClient.serviceType);
-            console.log(`[Auto-Checklist Webhook] Sent checklist to client ${updatedClient.email} for ${updatedClient.serviceType}`);
-          } catch (emailErr) {
-            console.error('[Auto-Checklist Webhook] Failed to send checklist email:', emailErr.message);
+          // Send Checklist Email only if they paid for full package
+          if (!isNoShowAssessment) {
+            try {
+              const { sendVisaChecklist } = require('./emailService');
+              await sendVisaChecklist(updatedClient.email, `${updatedClient.firstName} ${updatedClient.lastName}`, updatedClient.serviceType);
+              console.log(`[Auto-Checklist Webhook] Sent checklist to client ${updatedClient.email} for ${updatedClient.serviceType}`);
+            } catch (emailErr) {
+              console.error('[Auto-Checklist Webhook] Failed to send checklist email:', emailErr.message);
+            }
           }
 
           // Send Automated Payment Receipt & Credentials WhatsApp Message

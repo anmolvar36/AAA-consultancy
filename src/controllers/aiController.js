@@ -512,7 +512,7 @@ exports.getCeoBrief = async (req, res) => {
 
     // 22. Compile numbers for prompt or fallback
     const bookedSessionsToday = todayMeetings.length;
-    const missedWebinarFollowUps = consultations.filter(c => c.status === 'NO_SHOW').length;
+    const missedWebinarFollowUps = noShowCustomers;
 
     const rawMetrics = {
       newLeadsToday,

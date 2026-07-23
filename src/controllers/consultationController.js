@@ -278,6 +278,20 @@ const updateOutcome = async (req, res) => {
           `
         }).catch(err => console.error('[BG-Email] Cancel email failed:', err.message));
         console.log(`[Auto-Cancel] Dispatched cancellation rebook link to ${updatedLead.email}`);
+
+        // Schedule 24-hour delayed rebooking reminder if remindersQueue is active
+        if (remindersQueue && remindersQueue.add) {
+          await remindersQueue.add('cancelled-rebook-reminder', {
+            leadId: updatedLead.id,
+            email: updatedLead.email,
+            phone: updatedLead.phone,
+            firstName: updatedLead.firstName,
+            lastName: updatedLead.lastName
+          }, {
+            delay: 24 * 60 * 60 * 1000 // 24 hours
+          });
+          console.log(`[Auto-Cancel] Scheduled 24-hour rebook reminder for lead ${updatedLead.id}`);
+        }
       } catch (err) {
         console.error('[Auto-Cancel] Failed to dispatch cancellation notifications:', err.message);
       }

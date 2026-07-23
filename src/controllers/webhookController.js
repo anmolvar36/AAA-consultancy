@@ -382,11 +382,16 @@ async function processZoomRecording(payload) {
         meetingLink: {
           contains: meetingId.toString()
         }
+      },
+      include: {
+        lead: true
       }
     });
     
     if (consultation) {
       console.log(`Found Consultation ID ${consultation.id} for Zoom Meeting ${meetingId}. Saving recordingUrl.`);
+      
+      // 1. Update Consultation record status and recording link
       await prisma.consultation.update({
         where: { id: consultation.id },
         data: {
@@ -394,6 +399,46 @@ async function processZoomRecording(payload) {
           status: 'Completed'
         }
       });
+
+      // 2. Append recording link to the associated Lead notes if present
+      if (consultation.lead) {
+        const lead = consultation.lead;
+        const currentLeadNotes = lead.notes || '';
+        const appendMsg = `\n\n[Zoom Recording - Completed]: ${shareUrl}`;
+        
+        await prisma.lead.update({
+          where: { id: lead.id },
+          data: { notes: currentLeadNotes + appendMsg }
+        });
+
+        // 3. Append to Client profileSummary if lead is linked to a Client
+        if (lead.clientId) {
+          const client = await prisma.client.findUnique({
+            where: { id: lead.clientId }
+          });
+          if (client) {
+            const currentProfileSummary = client.profileSummary || '';
+            await prisma.client.update({
+              where: { id: lead.clientId },
+              data: { profileSummary: currentProfileSummary + appendMsg }
+            });
+          }
+        }
+
+        // 4. Log a Communication History entry under the Client/Lead
+        await prisma.communicationLog.create({
+          data: {
+            clientId: lead.clientId || null,
+            phone: lead.phone || null,
+            name: `${lead.firstName} ${lead.lastName}`.trim(),
+            channel: 'MEETING',
+            direction: 'OUTBOUND',
+            deliveryStatus: 'SENT',
+            content: `Zoom Cloud Recording Completed. Meeting: ${consultation.type || 'Eligibility Assessment'} | Date: ${consultation.date} | Link: ${shareUrl}`,
+          }
+        });
+        console.log(`[processZoomRecording] Successfully linked recording link to Lead ${lead.id} notes and communication logs.`);
+      }
     } else {
       console.warn(`No Consultation record found matching Zoom Meeting ID ${meetingId}`);
     }

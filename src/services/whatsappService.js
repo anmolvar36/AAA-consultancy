@@ -121,3 +121,92 @@ exports.sendWhatsAppMessage = async ({ to, templateName, languageCode = 'en', co
   }
 };
 
+/**
+ * Sends automated Payment Successful WhatsApp message with receipt details, delivery notice, and portal credentials.
+ */
+exports.sendPaymentSuccessWhatsApp = async ({ client, paymentId, amount, serviceType, generatedPassword }) => {
+  if (!client || !client.phone) {
+    console.warn('[Payment Success WhatsApp] client or client.phone is missing');
+    return;
+  }
+
+  const clientName = `${client.firstName || ''} ${client.lastName || ''}`.trim() || 'Valued Client';
+  const email = client.email || 'N/A';
+  const password = generatedPassword || (client.isTemporaryPassword ? 'Check your registered email' : 'Your registered password');
+  const service = serviceType || client.serviceType || 'Spanish Sworn Translation';
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+  const portalUrl = `${frontendUrl}/#/portal/login`;
+  const receiptId = paymentId ? `#${paymentId.substring(0, 8)}` : `#PAY-${Date.now()}`;
+  const formattedAmount = Number(amount || 0).toFixed(2);
+
+  const messageBody = `🎉 *Payment Successful & Confirmed!*
+
+Dear ${clientName},
+
+Thank you for your payment to AAA Business Consultancy. Your order has been successfully received.
+
+📄 *Payment Receipt Details:*
+• Receipt ID: ${receiptId}
+• Service: ${service}
+• Amount Paid: €${formattedAmount}
+
+⏰ *Delivery Time Notice:*
+Maximum delivery time within 7 working days from the date of payment is successfully received.
+
+🔑 *Your Client Portal Login Credentials:*
+• Login Portal: ${portalUrl}
+• Login ID (Email): ${email}
+• Password: ${password}
+
+Please log into your client portal to upload your documents and track your order status in real time.`;
+
+  let cleanPh = client.phone.trim();
+  if (cleanPh.startsWith('whatsapp:')) cleanPh = cleanPh.substring(9);
+  cleanPh = cleanPh.replace(/[^\d+]/g, '');
+  if (!cleanPh.startsWith('+')) cleanPh = '+' + cleanPh;
+
+  const twilioTo = `whatsapp:${cleanPh}`;
+  let deliveryStatus = 'SENT';
+  let failureReason = null;
+
+  if (isConfigured) {
+    try {
+      const clientTwilio = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+      await clientTwilio.messages.create({
+        body: messageBody,
+        from: TWILIO_WHATSAPP_FROM,
+        to: twilioTo
+      });
+      console.log(`[Payment Success WhatsApp] Successfully sent automated receipt & credentials to ${twilioTo}`);
+    } catch (err) {
+      console.error(`[Payment Success WhatsApp] Twilio send failed to ${twilioTo}:`, err.message);
+      deliveryStatus = 'FAILED';
+      failureReason = err.message;
+    }
+  } else {
+    console.log('------------------------------------------------------------');
+    console.log(`[PAYMENT SUCCESS WHATSAPP DRY-RUN]`);
+    console.log(`To: ${twilioTo}`);
+    console.log(`Body:\n${messageBody}`);
+    console.log('------------------------------------------------------------');
+  }
+
+  // Log in CommunicationLog so it appears in Live Chat / Social Inbox
+  try {
+    await prisma.communicationLog.create({
+      data: {
+        clientId: client.id,
+        phone: cleanPh,
+        name: 'System Automated',
+        channel: 'WHATSAPP',
+        direction: 'OUTBOUND',
+        content: messageBody,
+        deliveryStatus: deliveryStatus,
+        failureReason: failureReason
+      }
+    });
+  } catch (logErr) {
+    console.warn('[Payment Success WhatsApp] Could not log message to CommunicationLog:', logErr.message);
+  }
+};
+

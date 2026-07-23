@@ -432,9 +432,10 @@ async function getTranslationRate(sourceLanguage) {
 
 async function calculateSwornTranslationPrice(wordCount, sourceLanguage) {
   const rate = await getTranslationRate(sourceLanguage);
-  const subtotal = wordCount * rate;
-  const vat = subtotal * 0.05;
-  return parseFloat((subtotal + vat).toFixed(2));
+  const subtotal = parseFloat((wordCount * rate).toFixed(2));
+  const vat = parseFloat((subtotal * 0.05).toFixed(2));
+  const total = parseFloat((subtotal + vat).toFixed(2));
+  return { rate, subtotal, vat, total };
 }
 
 exports.uploadTranslationDocument = async (req, res) => {
@@ -455,13 +456,16 @@ exports.uploadTranslationDocument = async (req, res) => {
     const wordCount = text.trim().split(/\s+/).filter(word => word.length > 0).length;
 
     const sourceLanguage = req.body.sourceLanguage || 'English';
-    const calculatedPrice = await calculateSwornTranslationPrice(wordCount, sourceLanguage);
+    const priceDetails = await calculateSwornTranslationPrice(wordCount, sourceLanguage);
 
     return res.status(200).json({
       success: true,
       data: {
         wordCount,
-        estimatedPrice: calculatedPrice,
+        rate: priceDetails.rate,
+        subtotal: priceDetails.subtotal,
+        vat: priceDetails.vat,
+        estimatedPrice: priceDetails.total,
         currency: 'EUR'
       }
     });
@@ -564,7 +568,14 @@ exports.checkoutTranslationDocument = async (req, res) => {
     });
 
     // 4. Create Payment Record
-    const finalPrice = await calculateSwornTranslationPrice(Number(wordCount) || 0, sourceLanguage || 'English');
+    const priceDetails = await calculateSwornTranslationPrice(Number(wordCount) || 0, sourceLanguage || 'English');
+    let finalPrice = priceDetails.total;
+    if (estimatedPrice) {
+      const parsedReqPrice = parseFloat(estimatedPrice);
+      if (!isNaN(parsedReqPrice) && parsedReqPrice > 0) {
+        finalPrice = parsedReqPrice;
+      }
+    }
     
     // Check if Stripe is configured
     const stripeSecret = process.env.STRIPE_SECRET_KEY;
@@ -599,7 +610,7 @@ exports.checkoutTranslationDocument = async (req, res) => {
                 name: 'Spanish Sworn Translation Certification',
                 description: `Sworn translation of documents. Source: ${sourceLanguage || 'English'}. Words: ${wordCount || 0}. (5% VAT Included)`,
               },
-              unit_amount: Math.round(finalPrice * 100), // finalPrice already includes 5% VAT
+              unit_amount: Math.round(finalPrice * 100), // finalPrice is total including 5% VAT
             },
             quantity: 1,
           }],
@@ -624,6 +635,21 @@ exports.checkoutTranslationDocument = async (req, res) => {
       where: { id: payment.id },
       data: { gatewayId }
     });
+
+    if (!isRealStripe) {
+      try {
+        const { sendPaymentSuccessWhatsApp } = require('../services/whatsappService');
+        await sendPaymentSuccessWhatsApp({
+          client,
+          paymentId: payment.id,
+          amount: finalPrice,
+          serviceType: 'Spanish Sworn Translation',
+          generatedPassword: generatedPassword || null
+        });
+      } catch (waErr) {
+        console.error('Failed to trigger mock WhatsApp payment receipt:', waErr.message);
+      }
+    }
 
     return res.status(201).json({
       success: true,

@@ -92,6 +92,21 @@ const processPaymentEvent = async (event) => {
           } catch (emailErr) {
             console.error('[Auto-Checklist Webhook] Failed to send checklist email:', emailErr.message);
           }
+
+          // Send Automated Payment Receipt & Credentials WhatsApp Message
+          try {
+            const { sendPaymentSuccessWhatsApp } = require('./whatsappService');
+            await sendPaymentSuccessWhatsApp({
+              client: updatedClient,
+              paymentId: payment.id,
+              amount: totalPaid,
+              serviceType: updatedClient.serviceType,
+              generatedPassword: session.metadata?.tempPassword || null
+            });
+            console.log(`[Auto-WhatsApp Payment Webhook] Sent payment success & portal credentials to client ${updatedClient.phone}`);
+          } catch (waErr) {
+            console.error('[Auto-WhatsApp Payment Webhook] Failed to send WhatsApp notification:', waErr.message);
+          }
         }
         
         // Remove from payment drip queue if applicable (handled by queue removal logic usually)

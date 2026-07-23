@@ -370,28 +370,37 @@ exports.getCeoBrief = async (req, res) => {
     // 12. Customers waiting for appointment booking
     const customersWaitingForAppointment = await prisma.client.count({
       where: {
-        status: 'Appointment Booked'
+        status: 'Application Submitted'
       }
     });
 
     // 13. Customers waiting for application submission
     const customersWaitingForSubmission = await prisma.client.count({
       where: {
-        visaStatus: 'Ready for Submission'
+        OR: [
+          { status: 'Ready to Submit' },
+          { visaStatus: 'Ready for Submission' }
+        ]
       }
     });
 
     // 14. Customers waiting for government updates
     const customersWaitingForGov = await prisma.client.count({
       where: {
-        visaStatus: 'Submitted to Gov'
+        OR: [
+          { status: 'Under Government Review' },
+          { visaStatus: 'Submitted to Gov' }
+        ]
       }
     });
 
     // 15. Customers requiring resubmission
     const customersRequiringResubmission = await prisma.client.count({
       where: {
-        visaStatus: 'Requires Resubmission'
+        OR: [
+          { status: { in: ['Resubmission in Progress', 'Ready for Resubmission'] } },
+          { visaStatus: { in: ['Requires Resubmission', 'Refused'] } }
+        ]
       }
     });
 
@@ -419,6 +428,18 @@ exports.getCeoBrief = async (req, res) => {
         },
         direction: 'INBOUND',
         readStatus: false
+      }
+    });
+
+    // 18b. New reviews and customer feedback
+    const feedbackCount = await prisma.notification.count({
+      where: {
+        OR: [
+          { title: { contains: 'feedback' } },
+          { body: { contains: 'feedback' } },
+          { title: { contains: 'review' } },
+          { body: { contains: 'review' } }
+        ]
       }
     });
 
@@ -490,6 +511,9 @@ exports.getCeoBrief = async (req, res) => {
     }));
 
     // 22. Compile numbers for prompt or fallback
+    const bookedSessionsToday = todayMeetings.length;
+    const missedWebinarFollowUps = consultations.filter(c => c.status === 'NO_SHOW').length;
+
     const rawMetrics = {
       newLeadsToday,
       activeClients,
@@ -513,6 +537,7 @@ exports.getCeoBrief = async (req, res) => {
       financeSummary,
       teamPerformance,
       marketingPerformance,
+      feedbackCount,
       todayMeetings: todayMeetings.map(m => ({
         timeSlot: m.timeSlot,
         leadName: m.lead ? `${m.lead.firstName} ${m.lead.lastName}` : 'Guest',
@@ -534,7 +559,7 @@ Base it on the following live CRM metrics:
 - New leads received today/overnight: ${newLeadsToday}
 - Active clients: ${activeClients}
 - Pending consultations: ${pendingConsultations}
-- Today's meetings: ${todayMeetings.length}
+- Today's meetings/info sessions: ${bookedSessionsToday}
 - Outstanding payments waiting: ${outstandingPaymentsCount} (Total amount: €${outstandingPaymentsAmount})
 - Professional Case Assessments awaiting doc review: ${assessmentsAwaitingReview}
 - Full Processing cases awaiting action: ${fullProcessingCasesAwaitingAction}
@@ -549,11 +574,12 @@ Base it on the following live CRM metrics:
 - Urgent or unread notifications/tasks: ${urgentOverdueTasks}
 - WhatsApp inbox items: ${whatsappConversations}
 - Social inbox items: ${socialInquiries}
+- New customer reviews and feedback alerts: ${feedbackCount}
 - Financial summary: Today Paid: €${financeSummary.today}, Weekly: €${financeSummary.weekly}, Monthly: €${financeSummary.monthly}
 
 Output formatting:
 - Return a JSON object with two fields: "brief" (string, contains the daily greeting and natural language summary in Markdown bullet points) and "suggestions" (array of strings, contains 4-5 strategic recommendations for today).
-- The brief should sound premium, executive-focused, and address Wael personally.`;
+- The brief should sound premium, executive-focused, and address Wael personally. Include specific numbers where appropriate.`;
 
         const response = await axios.post('https://api.openai.com/v1/chat/completions', {
           model: 'gpt-3.5-turbo',
@@ -585,14 +611,16 @@ Output formatting:
       aiSummary = `Good morning, Wael.
 Here's your business summary for today:
 • **${newLeadsToday} new leads** were received overnight.
-• **${todayMeetings.length} customers** have meetings or information sessions scheduled for today.
-• **${customersReadyForPayment} customers** are waiting to complete their payments (Outstanding: **€${outstandingPaymentsAmount}**).
-• **${assessmentsAwaitingReview} Professional Case Assessments** are ready for document review by the operations team.
+• **${bookedSessionsToday} customers** booked the Free Spain Visa & Residency Information Session.
+• **${customersReadyForPayment} customers** are waiting to complete their €250 Professional Case Assessment payments (Outstanding: **€${outstandingPaymentsAmount}**).
+• **${assessmentsAwaitingReview} Professional Case Assessments** are ready for document review.
 • **${customersWaitingForSubmission} visa applications** are complete and ready for submission.
-• **${noShowCustomers} customer assessments** marked as No-Show and require fallback automated drip emails.
-• WhatsApp generated **${whatsappConversations} inbound conversations** that require operator attention.
+• **${missedWebinarFollowUps} customers** missed yesterday's webinar and require follow-up.
+• Today's webinar session is scheduled in the calendar.
 • Marketing campaigns generated **${newLeadsToday} inquiries** within the last 24 hours.
-• Financial progress: Today **€${financeSummary.today}** paid, Monthly total is **€${financeSummary.monthly}**.`;
+• WhatsApp generated **${whatsappConversations} inbound conversations** requiring operator attention.
+• Financial progress: Today **€${financeSummary.today}** paid, Monthly total is **€${financeSummary.monthly}**.
+• Customer feedback: **${feedbackCount} customer reviews and feedback** items require your review.`;
 
       aiSuggestions = [
         `Follow up with the ${customersReadyForPayment} customers waiting for payment to confirm setup or trigger the 10% CEO discount reminder.`,

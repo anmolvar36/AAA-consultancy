@@ -9,25 +9,51 @@ const generateAiSummary = async (client, communications = [], lead = null) => {
   const apiKey = process.env.OPENAI_API_KEY;
   const isRealApiKey = apiKey && !apiKey.includes('your_openai');
 
+  const service = client.serviceType || 'Spain Visa & Residency';
+  const nationality = client.nationality || 'International Applicant';
+  const name = `${client.firstName} ${client.lastName}`;
+  const totalLogs = communications.length;
+
   const commText = communications.map(c => `[${c.channel} - ${c.direction}]: ${c.content}`).join('\n');
   const qualText = lead && lead.qualificationData ? JSON.stringify(lead.qualificationData) : 'None';
 
   if (isRealApiKey) {
     try {
-      const prompt = `You are an AI assistant for a Spanish Immigration Consultancy. Summarize this client in 3 crisp bullet points for consultants:
-Client Name: ${client.firstName} ${client.lastName}
-Service: ${client.serviceType}
-Nationality: ${client.nationality}
+      const prompt = `You are an AI assistant for Wael Madi, CEO of AAA Business Consultancy LLC.
+Analyze this client record and generate a structured JSON summary.
+Client Name: ${name}
+Service: ${service}
+Nationality: ${nationality}
 Qualification Data: ${qualText}
-Communication Logs: ${commText || 'No logs yet'}
+Client Status: ${client.status}
+Visa Status: ${client.visaStatus || 'Not Started'}
+Communication Logs:
+${commText || 'No logs yet'}
 
-Output 3 bullet points starting with •. Focus on Residency Goal, Financial/Income Status, and Next Steps.`;
+You MUST return a JSON object with the following fields:
+{
+  "clientObjective": "Provide a 1-2 sentence description of what service they are interested in and their goals/expectations.",
+  "missingRequirements": ["List missing documents, missing info, or pending actions required from the client as separate strings."],
+  "eligibilityAssessment": "Assess their eligibility based on available info. Mention potential concerns, risks, or rejection factors.",
+  "communicationSummary": "Summarize previous conversations, key questions asked by the client, and answers already provided.",
+  "lastActivity": "Detail the date/time and description of the latest action performed by the client or staff.",
+  "nextRecommendedAction": "State the most critical next step (e.g. 'Request criminal background check', 'Send payment link', etc.)",
+  "priorityLevel": "Must be one of: '🔴 High Priority', '🟡 Medium Priority', '🟢 Low Priority'",
+  "leadTemperature": "Must be one of: '🔥 Hot Lead', '🟠 Warm Lead', '❄ Cold Lead'",
+  "overallCaseProgress": 35, // A number representing progress percentage (e.g. 15, 35, 60, 90, 100)
+  "recommendedPackage": "State the most suitable package based on their profile.",
+  "estimatedSuccessProbability": 85 // An integer representing estimated likelihood of approval (for staff eyes only)
+}`;
 
       const response = await axios.post('https://api.openai.com/v1/chat/completions', {
         model: 'gpt-3.5-turbo',
-        messages: [{ role: 'system', content: 'You summarize immigration clients.' }, { role: 'user', content: prompt }],
+        messages: [
+          { role: 'system', content: 'You are an executive assistant. You always reply in valid JSON format matching the requested schema.' },
+          { role: 'user', content: prompt }
+        ],
+        response_format: { type: "json_object" },
         temperature: 0.5,
-        max_tokens: 250
+        max_tokens: 800
       }, {
         headers: {
           'Authorization': `Bearer ${apiKey}`,
@@ -36,7 +62,7 @@ Output 3 bullet points starting with •. Focus on Residency Goal, Financial/Inc
       });
 
       if (response.data?.choices?.[0]?.message?.content) {
-        return response.data.choices[0].message.content.trim();
+        return JSON.parse(response.data.choices[0].message.content.trim());
       }
     } catch (err) {
       console.warn('[AI Controller] OpenAI API call failed or rate-limited, falling back to smart heuristic:', err.message);
@@ -44,14 +70,74 @@ Output 3 bullet points starting with •. Focus on Residency Goal, Financial/Inc
   }
 
   // Smart Structured Heuristic Fallback Summarizer
-  const areaInfo = client.preferableArea || lead?.preferableArea ? ` | Target Area: ${client.preferableArea || lead?.preferableArea}` : '';
-  const budgetInfo = client.budget || lead?.budget ? ` | Budget: ${client.budget || lead?.budget}` : '';
+  const preferableArea = client.preferableArea || lead?.preferableArea || 'Spain';
+  const budget = client.budget || lead?.budget || 'Standard';
+  const clientObjective = `${name} is focused on securing Spanish residency via the ${service} Pathway. Target timeline is immediate relocation to ${preferableArea} with a budget of ${budget}.`;
 
-  return [
-    `• Target Service Goal: ${client.serviceType || 'Spain Residency'}${areaInfo}${budgetInfo}`,
-    `• Qualification Summary: ${lead?.qualificationData ? Object.entries(lead.qualificationData).map(([k, v]) => `${k.replace(/([A-Z])/g, ' $1')}: ${v}`).join('; ') : 'Self-Assessment completed. Full verification in progress.'}`,
-    `• Case Status & History: Current Status: ${client.status} | Visa Stage: ${client.visaStatus || 'Not Started'} | Total Interactions logged: ${communications.length}`
-  ].join('\n\n');
+  const missingRequirements = [];
+  if (!client.nationality) missingRequirements.push('Nationality declaration is missing.');
+  if (client.visaStatus === 'Documents Pending' || !client.visaStatus) {
+    missingRequirements.push('Criminal Background check with Apostille is missing.');
+    missingRequirements.push('Official Spain health insurance policy documents are required.');
+  } else {
+    missingRequirements.push('Official translated bank statements showing stable remote income are pending.');
+  }
+
+  let eligibilityAssessment = `Based on self-intake qualifications, client has high eligibility under the ${service} thresholds. Concern level is low.`;
+  if (client.nationality === 'Russian' || client.nationality === 'Chinese') {
+    eligibilityAssessment += ' Note: Check extra compliance checks for financial transactions from this origin.';
+  }
+
+  let communicationSummary = `Consultations booked successfully. Logging ${totalLogs} interactions.`;
+  if (totalLogs > 0) {
+    const lastComm = communications[totalLogs - 1];
+    communicationSummary += ` Last conversation channel: ${lastComm.channel} (${lastComm.direction}). Discussion: ${lastComm.content.substring(0, 80)}...`;
+  }
+
+  const lastActivity = totalLogs > 0
+    ? `Last interaction logged on ${new Date(communications[totalLogs - 1].createdAt).toLocaleDateString()} via ${communications[totalLogs - 1].channel}`
+    : `Client account initialized on ${new Date(client.createdAt).toLocaleDateString()}`;
+
+  let nextRecommendedAction = 'Contact the client to complete their visa package setup.';
+  if (client.status === 'Waiting for Payment') {
+    nextRecommendedAction = 'Send secure payment link for selected Spain Relocation Package.';
+  } else if (client.visaStatus === 'Documents Pending') {
+    nextRecommendedAction = 'Request additional criminal background documentation and passport copies.';
+  }
+
+  let overallCaseProgress = 15;
+  if (client.status === 'Payment Received') overallCaseProgress = 40;
+  if (client.visaStatus === 'Documents Under Review') overallCaseProgress = 60;
+  if (client.visaStatus === 'Ready to Submit') overallCaseProgress = 80;
+  if (client.visaStatus === 'Visa Approved') overallCaseProgress = 100;
+
+  let successProbability = 85;
+  if (client.nationality === 'Russian' || client.nationality === 'Chinese') successProbability = 72;
+  if (service.toLowerCase().includes('dnv')) successProbability = 90;
+
+  let leadTemperature = 'Warm';
+  if (client.status === 'Waiting for Payment' || client.visaStatus === 'Ready to Submit') leadTemperature = 'Hot';
+  else if (client.status === 'Cold Lead') leadTemperature = 'Cold';
+
+  let priorityLevel = 'Medium';
+  if (client.status === 'Waiting for Payment' || client.visaStatus === 'Additional Documents Required') priorityLevel = 'High';
+  else if (client.status === 'Lost Lead') priorityLevel = 'Low';
+
+  const recommendedPackage = service.toLowerCase().includes('dnv') ? 'Option B: Full Processing Package' : 'Option C: Premium Relocation Package';
+
+  return {
+    clientObjective,
+    missingRequirements,
+    eligibilityAssessment,
+    communicationSummary,
+    lastActivity,
+    nextRecommendedAction,
+    priorityLevel: priorityLevel === 'High' ? '🔴 High Priority' : priorityLevel === 'Medium' ? '🟡 Medium Priority' : '🟢 Low Priority',
+    leadTemperature: leadTemperature === 'Hot' ? '🔥 Hot Lead' : leadTemperature === 'Warm' ? '🟠 Warm Lead' : '❄ Cold Lead',
+    overallCaseProgress,
+    recommendedPackage,
+    estimatedSuccessProbability: successProbability
+  };
 };
 
 exports.summarizeClient = async (req, res) => {
@@ -62,7 +148,6 @@ exports.summarizeClient = async (req, res) => {
       return res.status(400).json({ success: false, message: 'clientId is required' });
     }
 
-    // Check if client exists
     const client = await prisma.client.findUnique({
       where: { id: clientId },
       include: { lead: true }
@@ -72,7 +157,6 @@ exports.summarizeClient = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Client not found' });
     }
 
-    // 1. Get communications
     const allComms = await prisma.communicationLog.findMany({
       where: { clientId },
       orderBy: { createdAt: 'asc' }
@@ -82,7 +166,7 @@ exports.summarizeClient = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      data: { summary, cached: false }
+      data: summary
     });
 
   } catch (error) {

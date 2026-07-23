@@ -213,3 +213,405 @@ exports.analyzeTranslationPdf = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Server error analyzing PDF' });
   }
 };
+
+exports.getCeoBrief = async (req, res) => {
+  try {
+    const today = new Date();
+    
+    // Start/End of today
+    const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const endOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+    
+    // Format today as YYYY-MM-DD for Consultation.date comparison
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    const dd = String(today.getDate()).padStart(2, '0');
+    const todayStr = `${yyyy}-${mm}-${dd}`;
+
+    // Start of week (Sunday)
+    const startOfWeek = new Date(today);
+    startOfWeek.setDate(today.getDate() - today.getDay());
+    startOfWeek.setHours(0, 0, 0, 0);
+
+    // Start of month
+    const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+
+    // 1. Number of new leads received today
+    const newLeadsToday = await prisma.lead.count({
+      where: {
+        createdAt: { gte: startOfToday, lte: endOfToday }
+      }
+    });
+
+    // 2. Number of active clients
+    const activeClients = await prisma.client.count({
+      where: {
+        status: {
+          in: [
+            'Attempting Contact',
+            'Assessment Booked',
+            'Under Assessment',
+            'Eligible',
+            'Waiting for Payment',
+            'Payment Received',
+            'Documents Pending',
+            'Documents Under Review',
+            'Additional Documents Required',
+            'Ready to Submit',
+            'Application Submitted',
+            'Appointment Booked',
+            'Under Government Review',
+            'Resubmission in Progress',
+            'Ready for Resubmission',
+            'Resubmitted',
+            'Appeal in Progress',
+            'Administrative Support'
+          ]
+        }
+      }
+    });
+
+    // 3. Number of pending consultations
+    const pendingConsultations = await prisma.consultation.count({
+      where: {
+        status: 'Scheduled'
+      }
+    });
+
+    // 4. Today's meetings and webinars
+    const todayMeetings = await prisma.consultation.findMany({
+      where: {
+        date: todayStr
+      },
+      include: {
+        lead: {
+          select: {
+            firstName: true,
+            lastName: true,
+            email: true,
+            phone: true
+          }
+        },
+        consultant: {
+          select: {
+            fullName: true,
+            email: true
+          }
+        }
+      }
+    });
+
+    // 5. Outstanding payments awaiting confirmation
+    const outstandingPayments = await prisma.payment.findMany({
+      where: {
+        status: 'Pending'
+      },
+      include: {
+        client: {
+          select: {
+            firstName: true,
+            lastName: true
+          }
+        }
+      }
+    });
+
+    const outstandingPaymentsCount = outstandingPayments.length;
+    const outstandingPaymentsAmount = outstandingPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
+
+    // 6. Professional Case Assessments awaiting review
+    const assessmentsAwaitingReview = await prisma.document.count({
+      where: {
+        status: 'Pending Verification',
+        client: {
+          status: 'Documents Under Review'
+        }
+      }
+    });
+
+    // 7. Full Processing cases awaiting action
+    const fullProcessingCasesAwaitingAction = await prisma.client.count({
+      where: {
+        status: 'Documents Under Review',
+        serviceType: {
+          in: ['FULL_PROCESSING', 'Full Processing Package', 'PREMIUM', 'Premium Package']
+        }
+      }
+    });
+
+    // 8. No-Show customers
+    const noShowCustomers = await prisma.consultation.count({
+      where: {
+        status: 'NO_SHOW'
+      }
+    });
+
+    // 9. Customers requiring follow-up
+    const customersRequiringFollowUp = await prisma.client.count({
+      where: {
+        status: 'Cold Lead'
+      }
+    });
+
+    // 10. Customers ready for payment
+    const customersReadyForPayment = await prisma.client.count({
+      where: {
+        status: 'Waiting for Payment'
+      }
+    });
+
+    // 11. Customers waiting for document submission
+    const customersWaitingForDocs = await prisma.client.count({
+      where: {
+        status: 'Documents Pending'
+      }
+    });
+
+    // 12. Customers waiting for appointment booking
+    const customersWaitingForAppointment = await prisma.client.count({
+      where: {
+        status: 'Appointment Booked'
+      }
+    });
+
+    // 13. Customers waiting for application submission
+    const customersWaitingForSubmission = await prisma.client.count({
+      where: {
+        visaStatus: 'Ready for Submission'
+      }
+    });
+
+    // 14. Customers waiting for government updates
+    const customersWaitingForGov = await prisma.client.count({
+      where: {
+        visaStatus: 'Submitted to Gov'
+      }
+    });
+
+    // 15. Customers requiring resubmission
+    const customersRequiringResubmission = await prisma.client.count({
+      where: {
+        visaStatus: 'Requires Resubmission'
+      }
+    });
+
+    // 16. Urgent or overdue tasks (using notifications as proxy)
+    const urgentOverdueTasks = await prisma.notification.count({
+      where: {
+        isRead: false
+      }
+    });
+
+    // 17. WhatsApp conversations requiring attention
+    const whatsappConversations = await prisma.communicationLog.count({
+      where: {
+        channel: 'WHATSAPP',
+        direction: 'INBOUND',
+        readStatus: false
+      }
+    });
+
+    // 18. Social media inquiries received
+    const socialInquiries = await prisma.communicationLog.count({
+      where: {
+        channel: {
+          in: ['FB', 'IG', 'TELEGRAM', 'CHATBOT']
+        },
+        direction: 'INBOUND',
+        readStatus: false
+      }
+    });
+
+    // 19. Financial summary
+    const todayPaidAggregate = await prisma.payment.aggregate({
+      where: {
+        status: 'Paid',
+        billingDate: { gte: startOfToday, lte: endOfToday }
+      },
+      _sum: { totalPaid: true }
+    });
+
+    const weeklyPaidAggregate = await prisma.payment.aggregate({
+      where: {
+        status: 'Paid',
+        billingDate: { gte: startOfWeek, lte: endOfToday }
+      },
+      _sum: { totalPaid: true }
+    });
+
+    const monthlyPaidAggregate = await prisma.payment.aggregate({
+      where: {
+        status: 'Paid',
+        billingDate: { gte: startOfMonth, lte: endOfToday }
+      },
+      _sum: { totalPaid: true }
+    });
+
+    const financeSummary = {
+      today: todayPaidAggregate._sum.totalPaid || 0,
+      weekly: weeklyPaidAggregate._sum.totalPaid || 0,
+      monthly: monthlyPaidAggregate._sum.totalPaid || 0
+    };
+
+    // 20. Team performance overview (Consultants and client counts)
+    const consultants = await prisma.user.findMany({
+      where: { role: 'consultant' },
+      select: {
+        id: true,
+        fullName: true,
+        assignedClients: {
+          select: { id: true, status: true }
+        }
+      }
+    });
+
+    const teamPerformance = consultants.map(c => {
+      const activeCount = c.assignedClients.filter(cl => 
+        !['Completed', 'Closed', 'Lost Lead', 'Spam'].includes(cl.status)
+      ).length;
+      const completedCount = c.assignedClients.filter(cl => cl.status === 'Completed').length;
+      return {
+        id: c.id,
+        fullName: c.fullName,
+        activeClients: activeCount,
+        completedClients: completedCount
+      };
+    });
+
+    // 21. Marketing campaign performance
+    const marketingCampaigns = await prisma.lead.groupBy({
+      by: ['source'],
+      _count: { id: true }
+    });
+
+    const marketingPerformance = marketingCampaigns.map(mc => ({
+      source: mc.source || 'Website',
+      count: mc._count.id
+    }));
+
+    // 22. Compile numbers for prompt or fallback
+    const rawMetrics = {
+      newLeadsToday,
+      activeClients,
+      pendingConsultations,
+      meetingsCountToday: todayMeetings.length,
+      outstandingPaymentsCount,
+      outstandingPaymentsAmount,
+      assessmentsAwaitingReview,
+      fullProcessingCasesAwaitingAction,
+      noShowCustomers,
+      customersRequiringFollowUp,
+      customersReadyForPayment,
+      customersWaitingForDocs,
+      customersWaitingForAppointment,
+      customersWaitingForSubmission,
+      customersWaitingForGov,
+      customersRequiringResubmission,
+      urgentOverdueTasks,
+      whatsappConversations,
+      socialInquiries,
+      financeSummary,
+      teamPerformance,
+      marketingPerformance,
+      todayMeetings: todayMeetings.map(m => ({
+        timeSlot: m.timeSlot,
+        leadName: m.lead ? `${m.lead.firstName} ${m.lead.lastName}` : 'Guest',
+        consultantName: m.consultant ? m.consultant.fullName : 'Unassigned'
+      }))
+    };
+
+    // AI Generation
+    const apiKey = process.env.OPENAI_API_KEY;
+    const isRealApiKey = apiKey && !apiKey.includes('your_openai');
+    let aiSummary = '';
+    let aiSuggestions = [];
+
+    if (isRealApiKey) {
+      try {
+        const prompt = `You are the AI CEO Assistant for Wael Madi, CEO of AAA Business Consultancy LLC (Spanish Immigration & Sworn Translation Services).
+Generate a professional, motivating, and detailed daily morning briefing in the tone of "Good morning, Wael."
+Base it on the following live CRM metrics:
+- New leads received today/overnight: ${newLeadsToday}
+- Active clients: ${activeClients}
+- Pending consultations: ${pendingConsultations}
+- Today's meetings: ${todayMeetings.length}
+- Outstanding payments waiting: ${outstandingPaymentsCount} (Total amount: €${outstandingPaymentsAmount})
+- Professional Case Assessments awaiting doc review: ${assessmentsAwaitingReview}
+- Full Processing cases awaiting action: ${fullProcessingCasesAwaitingAction}
+- No-show customers: ${noShowCustomers}
+- Customers requiring follow-up: ${customersRequiringFollowUp}
+- Customers ready for payment: ${customersReadyForPayment}
+- Customers waiting for document submission: ${customersWaitingForDocs}
+- Customers waiting for appointment booking: ${customersWaitingForAppointment}
+- Customers waiting for application submission: ${customersWaitingForSubmission}
+- Customers waiting for government updates: ${customersWaitingForGov}
+- Customers requiring resubmission: ${customersRequiringResubmission}
+- Urgent or unread notifications/tasks: ${urgentOverdueTasks}
+- WhatsApp inbox items: ${whatsappConversations}
+- Social inbox items: ${socialInquiries}
+- Financial summary: Today Paid: €${financeSummary.today}, Weekly: €${financeSummary.weekly}, Monthly: €${financeSummary.monthly}
+
+Output formatting:
+- Return a JSON object with two fields: "brief" (string, contains the daily greeting and natural language summary in Markdown bullet points) and "suggestions" (array of strings, contains 4-5 strategic recommendations for today).
+- The brief should sound premium, executive-focused, and address Wael personally.`;
+
+        const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+          model: 'gpt-3.5-turbo',
+          messages: [
+            { role: 'system', content: 'You are an executive assistant. You always reply in valid JSON format matching {"brief": "...", "suggestions": ["...", "..."]}.' },
+            { role: 'user', content: prompt }
+          ],
+          response_format: { type: "json_object" },
+          temperature: 0.7
+        }, {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (response.data?.choices?.[0]?.message?.content) {
+          const parsed = JSON.parse(response.data.choices[0].message.content.trim());
+          aiSummary = parsed.brief;
+          aiSuggestions = parsed.suggestions;
+        }
+      } catch (err) {
+        console.warn('[AI Controller] OpenAI CEO Briefing generation failed, using heuristic fallback:', err.message);
+      }
+    }
+
+    // Heuristic Fallback Engine (Runs if API fails or Key is missing)
+    if (!aiSummary || !aiSuggestions.length) {
+      aiSummary = `Good morning, Wael.
+Here's your business summary for today:
+• **${newLeadsToday} new leads** were received overnight.
+• **${todayMeetings.length} customers** have meetings or information sessions scheduled for today.
+• **${customersReadyForPayment} customers** are waiting to complete their payments (Outstanding: **€${outstandingPaymentsAmount}**).
+• **${assessmentsAwaitingReview} Professional Case Assessments** are ready for document review by the operations team.
+• **${customersWaitingForSubmission} visa applications** are complete and ready for submission.
+• **${noShowCustomers} customer assessments** marked as No-Show and require fallback automated drip emails.
+• WhatsApp generated **${whatsappConversations} inbound conversations** that require operator attention.
+• Marketing campaigns generated **${newLeadsToday} inquiries** within the last 24 hours.
+• Financial progress: Today **€${financeSummary.today}** paid, Monthly total is **€${financeSummary.monthly}**.`;
+
+      aiSuggestions = [
+        `Follow up with the ${customersReadyForPayment} customers waiting for payment to confirm setup or trigger the 10% CEO discount reminder.`,
+        `Direct operations team to review the ${assessmentsAwaitingReview} case assessments currently pending document verification.`,
+        `Address the ${whatsappConversations} unread WhatsApp threads requiring consultant responses to preserve conversion rate.`,
+        `Assign the ${newLeadsToday} new incoming leads to agents based on spoken language expertise.`,
+        `Check appeal deadlines for application cycles requiring resubmissions (${customersRequiringResubmission} pending).`
+      ];
+    }
+
+    return res.status(200).json({
+      success: true,
+      metrics: rawMetrics,
+      brief: aiSummary,
+      suggestions: aiSuggestions
+    });
+
+  } catch (error) {
+    console.error('Error generating CEO Briefing:', error);
+    return res.status(500).json({ success: false, message: 'Server error generating executive dashboard data' });
+  }
+};

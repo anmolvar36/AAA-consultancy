@@ -184,3 +184,66 @@ exports.sendVisaChecklist = async (to, clientName, serviceType) => {
   });
 };
 
+/**
+ * Sends branded Appointment Confirmation email with Reschedule, Cancel, and Packages action buttons.
+ */
+exports.sendAppointmentConfirmationEmail = async ({ to, firstName, date, timeSlot, meetingLink, consultationId }) => {
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+  const joinUrl = meetingLink || 'https://zoom.us';
+  const rescheduleUrl = `${frontendUrl}/#/public/lead-form?reschedule=true&consultationId=${consultationId || ''}`;
+  const cancelUrl = `${frontendUrl}/#/public/lead-form?cancel=true&consultationId=${consultationId || ''}`;
+  const packagesUrl = `${frontendUrl}/#/portal/login`;
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 620px; margin: auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; background-color: #ffffff; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+      <div style="background: linear-gradient(135deg, #0f0c29, #302b63); padding: 24px; text-align: center; color: #ffffff;">
+        <h2 style="margin: 0; font-size: 22px; font-weight: 800;">AAA Business Consultancy</h2>
+        <p style="margin: 6px 0 0; font-size: 14px; opacity: 0.8;">Spain Visa & Residency Services</p>
+      </div>
+
+      <div style="padding: 28px;">
+        <h3 style="color: #2d3748; margin-top: 0; font-size: 18px;">✈️ Appointment Confirmation</h3>
+        <p style="color: #4a5568; line-height: 1.6;">Dear <b>${firstName}</b>,</p>
+        <p style="color: #4a5568; line-height: 1.6;">Thank you for booking your <b>Free 20-Minute Eligibility Assessment</b> with our expert team. Your booking is confirmed.</p>
+
+        <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 18px; margin: 20px 0;">
+          <h4 style="margin-top: 0; color: #1e293b; font-size: 15px;">📅 Appointment Details:</h4>
+          <ul style="margin: 0; padding-left: 20px; color: #334155; line-height: 1.8;">
+            <li><b>Date:</b> ${date}</li>
+            <li><b>Time:</b> ${timeSlot} (UTC)</li>
+            <li><b>Duration:</b> 20 Minutes</li>
+            <li><b>Meeting Link:</b> <a href="${joinUrl}" style="color: #2563eb; font-weight: 600;">Click to Join Zoom Meeting</a></li>
+          </ul>
+        </div>
+
+        <div style="text-align: center; margin: 24px 0;">
+          <a href="${joinUrl}" style="display: inline-block; padding: 12px 24px; background-color: #2563eb; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 700; font-size: 14px;">🎥 Join Zoom Meeting</a>
+        </div>
+
+        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+
+        <h4 style="color: #334155; margin-bottom: 12px; font-size: 14px;">⚙️ Manage Your Booking:</h4>
+        <div style="margin-bottom: 20px;">
+          <a href="${rescheduleUrl}" style="display: inline-block; padding: 10px 18px; background-color: #4f46e5; color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 13px; margin-right: 8px; margin-bottom: 8px;">🔄 Reschedule Appointment</a>
+          <a href="${cancelUrl}" style="display: inline-block; padding: 10px 18px; background-color: #ef4444; color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 13px; margin-right: 8px; margin-bottom: 8px;">❌ Cancel Appointment</a>
+          <a href="${packagesUrl}" style="display: inline-block; padding: 10px 18px; background-color: #059669; color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 13px; margin-bottom: 8px;">📦 Explore Service Packages</a>
+        </div>
+
+        <p style="font-size: 12px; color: #64748b; line-height: 1.5; background-color: #f1f5f9; padding: 12px; border-radius: 6px;">
+          ⚠️ <b>Policy Note:</b> If you do not join your scheduled Free Eligibility Assessment within 10 minutes of the appointment time, your booking will be automatically cancelled.
+        </p>
+      </div>
+
+      <div style="background-color: #f8fafc; border-top: 1px solid #e2e8f0; padding: 16px; text-align: center; color: #94a3b8; font-size: 12px;">
+        © 2026 AAA Business Consultancy · All rights reserved
+      </div>
+    </div>
+  `;
+
+  return exports.sendEmail({
+    to,
+    subject: `Booking Confirmed: Spain Visa Eligibility Assessment (${date} at ${timeSlot}) ✈️`,
+    html
+  });
+};
+

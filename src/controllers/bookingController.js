@@ -330,37 +330,47 @@ exports.createEligibilityBooking = async (req, res) => {
 
         console.log(`[NOTIFICATIONS] Dispatching booking confirmation for Lead: ${clientName} (${phone} / ${email})`);
 
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+        const rescheduleUrl = `${frontendUrl}/#/public/lead-form?reschedule=true&consultationId=${consultation.id}`;
+        const cancelUrl = `${frontendUrl}/#/public/lead-form?cancel=true&consultationId=${consultation.id}`;
+        const packagesUrl = `${frontendUrl}/#/portal/login`;
+
         // 1. Send WhatsApp Message
         try {
           const { sendCustomWhatsApp } = require('../services/chatbotService');
-          const waMsg = `Hello *${clientName}*,\n\nThank you for booking your Spain Visa Eligibility Assessment! ✈️🎉\n\n*Appointment Details:*\n📅 *Date:* ${date}\n⏰ *Time:* ${timeSlot} (UTC)\n🔗 *Meeting Join Link:* ${link}\n\n_Please join the meeting on time. If you do not join within 10 minutes of the scheduled time, the appointment will be automatically marked as No-Show._`;
+          const waMsg = `✈️ *Spain Visa Consultation Confirmed!*
+
+Dear *${clientName}*,
+
+Your Spain Visa Eligibility Assessment is confirmed.
+
+📅 *Date:* ${date}
+⏰ *Time:* ${timeSlot} (UTC)
+🔗 *Zoom Join Link:* ${link}
+
+─────────────
+👇 *Quick Action Links:*
+• 🔄 *Reschedule Booking:* ${rescheduleUrl}
+• ❌ *Cancel Booking:* ${cancelUrl}
+• 📦 *View Visa Packages:* ${packagesUrl}
+
+_Note: Please join within 10 minutes of appointment time to avoid automatic cancellation._`;
+
           await sendCustomWhatsApp(phone, waMsg);
         } catch (waErr) {
           console.error('[NOTIFICATIONS] Failed to send WhatsApp confirmation:', waErr.message);
         }
 
-        // 2. Send Email
+        // 2. Send Branded Email
         try {
-          const emailHtml = `
-            <h3>Spain Visa & Relocation - Assessment Booking Confirmed</h3>
-            <p>Dear ${firstName},</p>
-            <p>Thank you for booking your Free Eligibility Assessment and Consultation with AAA Business Consultancy.</p>
-            <p><strong>Appointment Details:</strong></p>
-            <ul>
-              <li><strong>Date:</strong> ${date}</li>
-              <li><strong>Time:</strong> ${timeSlot} (UTC)</li>
-              <li><strong>Duration:</strong> 20 Minutes</li>
-            </ul>
-            <p><strong>Meeting Join Link:</strong><br/>
-               <em>The Zoom meeting join link will be shared with you shortly via email once a consultant is confirmed. Please stay tuned and join the meeting on time.</em>
-            </p>
-            <p><em>Important: If you do not join your scheduled Free Eligibility Assessment within 10 minutes of the appointment time, your booking will be automatically cancelled. Due to high demand, missed appointments are not eligible for rescheduling.</em></p>
-            <p>Thank you for choosing AAA Business Consultancy!</p>
-          `;
-          await sendEmail({
+          const { sendAppointmentConfirmationEmail } = require('../services/emailService');
+          await sendAppointmentConfirmationEmail({
             to: email,
-            subject: 'Booking Confirmed: Spain Visa Eligibility Assessment',
-            html: emailHtml
+            firstName,
+            date,
+            timeSlot,
+            meetingLink: link,
+            consultationId: consultation.id
           });
         } catch (emailErr) {
           console.error('[NOTIFICATIONS] Failed to send Email confirmation:', emailErr.message);

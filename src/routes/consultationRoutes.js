@@ -1,8 +1,20 @@
 const express = require('express');
-const { getConsultations, createConsultation, updateOutcome, respondToConsultation, createConsultationForLead, reassignConsultant } = require('../controllers/consultationController');
+const {
+  getConsultations,
+  createConsultation,
+  updateOutcome,
+  respondToConsultation,
+  createConsultationForLead,
+  reassignConsultant,
+  publicRescheduleConsultation,
+  publicCancelConsultation
+} = require('../controllers/consultationController');
 const { authMiddleware, rbacMiddleware } = require('../middlewares/authMiddleware');
 
 const router = express.Router();
+
+router.patch('/public/reschedule', publicRescheduleConsultation);
+router.patch('/public/cancel', publicCancelConsultation);
 
 router.route('/')
   .get(authMiddleware, getConsultations)

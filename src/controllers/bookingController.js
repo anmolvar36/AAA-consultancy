@@ -213,7 +213,7 @@ exports.createEligibilityBooking = async (req, res) => {
       // Update device fingerprint & assignment if missing
       await prisma.client.update({
         where: { id: client.id },
-        data: { 
+        data: {
           deviceFingerprint: deviceFingerprint || undefined,
           assignedToId: client.assignedToId || bestConsultantId,
           preferableArea: preferableArea || undefined,
@@ -223,7 +223,7 @@ exports.createEligibilityBooking = async (req, res) => {
     }
 
     // 5. Create Lead (if doesn't exist for UI compatibility)
-    let lead = await prisma.lead.findUnique({ where: { clientId: client.id }});
+    let lead = await prisma.lead.findUnique({ where: { clientId: client.id } });
     if (!lead) {
       lead = await prisma.lead.create({
         data: {
@@ -311,7 +311,7 @@ exports.createEligibilityBooking = async (req, res) => {
 
     // Schedule NO-SHOW enforcer precisely at meetingStart + 10 mins
     const delay = tenMinsAfterStart.getTime() - Date.now();
-    
+
     if (delay > 0) {
       await noShowEnforcerQueue.add('enforce-no-show', {
         consultationId: consultation.id,
@@ -425,7 +425,7 @@ exports.createEligibilityBooking = async (req, res) => {
 
 async function getTranslationRate(sourceLanguage) {
   const lang = (sourceLanguage || 'English').toLowerCase().trim();
-  
+
   // Try to load dynamic rates from DB settings
   try {
     const settings = await prisma.companySetting.findFirst();
@@ -433,7 +433,7 @@ async function getTranslationRate(sourceLanguage) {
       const rates = typeof settings.swornTranslationRates === 'string'
         ? JSON.parse(settings.swornTranslationRates)
         : settings.swornTranslationRates;
-      
+
       if (lang.includes('arabic') && rates.arabicToSpanish) return parseFloat(rates.arabicToSpanish);
       if (lang.includes('urdu') && rates.urduToSpanish) return parseFloat(rates.urduToSpanish);
       if (lang.includes('english') && rates.englishToSpanish) return parseFloat(rates.englishToSpanish);
@@ -474,7 +474,7 @@ exports.uploadTranslationDocument = async (req, res) => {
     // Parse PDF using unpdf extractText
     const pdfData = await extractText(new Uint8Array(req.file.buffer));
     const text = Array.isArray(pdfData.text) ? pdfData.text.join(' ') : (pdfData.text || '');
-    
+
     // Count words (naive whitespace split)
     const wordCount = text.trim().split(/\s+/).filter(word => word.length > 0).length;
 
@@ -554,7 +554,7 @@ exports.checkoutTranslationDocument = async (req, res) => {
     } else {
       client = await prisma.client.update({
         where: { id: client.id },
-        data: { 
+        data: {
           status: 'Documents Under Review',
           sourceLanguage: sourceLanguage || undefined,
           targetLanguage: targetLanguage || undefined,
@@ -599,7 +599,7 @@ exports.checkoutTranslationDocument = async (req, res) => {
         finalPrice = parsedReqPrice;
       }
     }
-    
+
     // Check if Stripe is configured
     const stripeSecret = process.env.STRIPE_SECRET_KEY;
     const isRealStripe = stripeSecret && !stripeSecret.includes('your_stripe');

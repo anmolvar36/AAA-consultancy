@@ -478,8 +478,97 @@ exports.uploadTranslationDocument = async (req, res) => {
     // Count words (naive whitespace split)
     const wordCount = text.trim().split(/\s+/).filter(word => word.length > 0).length;
 
-    const sourceLanguage = req.body.sourceLanguage || 'English';
-    const priceDetails = await calculateSwornTranslationPrice(wordCount, sourceLanguage);
+    const {
+      firstName,
+      lastName,
+      email,
+      phone,
+      nationality,
+      sourceLanguage,
+      targetLanguage
+    } = req.body;
+
+    const sourceLang = sourceLanguage || 'English';
+    const priceDetails = await calculateSwornTranslationPrice(wordCount, sourceLang);
+
+    // Save/Update Client & Lead in CRM database upon requesting quote
+    if (firstName && lastName && email && phone) {
+      try {
+        const bcrypt = require('bcrypt');
+        const crypto = require('crypto');
+        
+        let client = await prisma.client.findUnique({
+          where: { email: email.toLowerCase() }
+        });
+
+        if (!client) {
+          const generatedPassword = crypto.randomBytes(8).toString('hex');
+          const salt = await bcrypt.genSalt(10);
+          const hashedPassword = await bcrypt.hash(generatedPassword, salt);
+
+          client = await prisma.client.create({
+            data: {
+              firstName,
+              lastName,
+              email: email.toLowerCase(),
+              phone,
+              nationality: nationality || null,
+              serviceType: 'Spanish Sworn Translation',
+              password: hashedPassword,
+              isTemporaryPassword: true,
+              status: 'Quote Requested',
+              sourceLanguage: sourceLang,
+              targetLanguage: targetLanguage || 'Spanish',
+              wordCount: wordCount
+            }
+          });
+        } else {
+          client = await prisma.client.update({
+            where: { id: client.id },
+            data: {
+              phone: phone || undefined,
+              nationality: nationality || undefined,
+              sourceLanguage: sourceLang,
+              targetLanguage: targetLanguage || 'Spanish',
+              wordCount: wordCount
+            }
+          });
+        }
+
+        // Create or update Lead for CRM Inbox visibility
+        let lead = await prisma.lead.findUnique({ where: { clientId: client.id } });
+        if (!lead) {
+          await prisma.lead.create({
+            data: {
+              firstName,
+              lastName,
+              email: email.toLowerCase(),
+              phone,
+              nationality: nationality || null,
+              serviceType: 'Spanish Sworn Translation',
+              status: 'Quote Requested',
+              clientId: client.id,
+              sourceLanguage: sourceLang,
+              targetLanguage: targetLanguage || 'Spanish',
+              wordCount: wordCount
+            }
+          });
+        } else {
+          await prisma.lead.update({
+            where: { id: lead.id },
+            data: {
+              phone: phone || undefined,
+              nationality: nationality || undefined,
+              sourceLanguage: sourceLang,
+              targetLanguage: targetLanguage || 'Spanish',
+              wordCount: wordCount
+            }
+          });
+        }
+      } catch (crmErr) {
+        console.warn('[CRM Save Warning in Upload]:', crmErr.message);
+      }
+    }
 
     return res.status(200).json({
       success: true,

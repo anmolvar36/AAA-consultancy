@@ -98,14 +98,25 @@ exports.getConversations = async (req, res) => {
       // Fetch message history for this phone
       const messagesLogs = await prisma.communicationLog.findMany({
         where: { phone: cleanPh },
-        orderBy: { createdAt: 'asc' }
+        orderBy: { createdAt: 'asc' },
+        include: {
+          respondedByUser: {
+            select: { id: true, fullName: true, role: true, avatar: true }
+          }
+        }
       });
 
       const messages = messagesLogs.map(m => ({
         id: m.id,
         sender: m.direction === 'INBOUND' ? 'customer' : (m.direction === 'SYSTEM' ? 'system' : 'agent'),
         text: m.content,
-        timestamp: new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        timestamp: new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        respondedBy: m.respondedByUser ? {
+          id: m.respondedByUser.id,
+          name: m.respondedByUser.fullName,
+          role: m.respondedByUser.role,
+          avatar: m.respondedByUser.avatar
+        } : (m.direction === 'OUTBOUND' ? { name: m.name || 'Agent' } : null)
       }));
 
       // Calculate unread count (INBOUND messages that are unread)
@@ -152,7 +163,12 @@ exports.getMessagesByPhone = async (req, res) => {
     // 1. Fetch all logs for this phone number
     const logs = await prisma.communicationLog.findMany({
       where: { phone: cleanPh },
-      orderBy: { createdAt: 'asc' }
+      orderBy: { createdAt: 'asc' },
+      include: {
+        respondedByUser: {
+          select: { id: true, fullName: true, role: true, avatar: true }
+        }
+      }
     });
 
     // 2. Mark incoming messages as read
@@ -170,7 +186,13 @@ exports.getMessagesByPhone = async (req, res) => {
       id: log.id,
       sender: log.direction === 'INBOUND' ? 'customer' : (log.direction === 'SYSTEM' ? 'system' : 'agent'),
       text: log.content,
-      timestamp: log.createdAt
+      timestamp: log.createdAt,
+      respondedBy: log.respondedByUser ? {
+        id: log.respondedByUser.id,
+        name: log.respondedByUser.fullName,
+        role: log.respondedByUser.role,
+        avatar: log.respondedByUser.avatar
+      } : (log.direction === 'OUTBOUND' ? { name: log.name || 'Agent' } : null)
     }));
 
     return res.status(200).json(messages);
@@ -219,28 +241,46 @@ exports.sendSocialMessage = async (req, res) => {
       where: { phone: { contains: numberPart } }
     });
 
+    const staffUserId = req.user?.id || null;
+    const staffName = req.user?.fullName || 'Agent';
+    const staffRole = req.user?.role || 'consultant';
+
     // 3. Log OUTBOUND message to Database
     const log = await prisma.communicationLog.create({
       data: {
         clientId: clientRecord ? clientRecord.id : null,
         phone: cleanPh,
-        name: 'Agent',
+        name: staffName,
+        respondedByUserId: staffUserId,
         channel: 'WHATSAPP',
         direction: 'OUTBOUND',
         content: text,
         deliveryStatus: 'SENT'
+      },
+      include: {
+        respondedByUser: {
+          select: { id: true, fullName: true, role: true, avatar: true }
+        }
       }
     });
+
+    const respondedByObj = log.respondedByUser ? {
+      id: log.respondedByUser.id,
+      name: log.respondedByUser.fullName,
+      role: log.respondedByUser.role,
+      avatar: log.respondedByUser.avatar
+    } : { name: staffName, role: staffRole };
 
     // 4. Broadcast via WebSockets
     const io = req.app.get('io');
     if (io) {
       io.emit('new_whatsapp_message', {
         phone: cleanPh,
-        name: 'Agent',
+        name: staffName,
         text: text,
         timestamp: log.createdAt,
-        sender: 'agent'
+        sender: 'agent',
+        respondedBy: respondedByObj
       });
     }
 
@@ -251,7 +291,8 @@ exports.sendSocialMessage = async (req, res) => {
         id: log.id,
         sender: 'agent',
         text: log.content,
-        timestamp: log.createdAt
+        timestamp: log.createdAt,
+        respondedBy: respondedByObj
       }
     });
   } catch (error) {

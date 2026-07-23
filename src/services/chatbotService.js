@@ -32,13 +32,23 @@ exports.handleChatbotMessage = async (phone, name, text, messageId = null) => {
   
   const cleanMessage = text.trim().toLowerCase();
 
-  // 1b. Validate English-only message requirements
+  // 1b. Validate English-only message requirements & send deduplicated auto-reply
   const hasNonAscii = /[^\x00-\x7F]/.test(text);
-  const foreignWords = ['hola', 'bonjour', 'marhaban', 'ciao', 'hallo', 'como', 'estás'];
+  const foreignWords = ['hola', 'bonjour', 'marhaban', 'ciao', 'hallo', 'como', 'estás', 'gracias', 'merci', 'shukran'];
   const words = cleanMessage.split(/\s+/);
   const hasForeignWord = words.some(w => foreignWords.includes(w));
   if (hasNonAscii || hasForeignWord) {
-    await sendCustomWhatsApp(cleanPhone, "⚠️ Please message in English only. Our Customer support team only speaks English.");
+    const nonEnglishDedupeKey = `chatbot:non_english_warn:${cleanPhone}`;
+    const alreadyWarned = await redis.get(nonEnglishDedupeKey);
+    if (!alreadyWarned) {
+      if (redis.set) {
+        await redis.set(nonEnglishDedupeKey, 'true', 'EX', 1800);
+      }
+      await sendCustomWhatsApp(
+        cleanPhone,
+        "Thank you for contacting us. Our customer support team only speaks English. Kindly send your message in English, and we will be happy to assist you."
+      );
+    }
     return;
   }
 

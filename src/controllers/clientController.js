@@ -571,6 +571,25 @@ const updateClientDependents = async (req, res) => {
   }
 };
 
+const submitGoogleReviewStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { googleReviewSubmitted } = req.body;
+
+    const client = await prisma.client.update({
+      where: { id },
+      data: {
+        googleReviewSubmitted: googleReviewSubmitted === true
+      }
+    });
+
+    res.json({ success: true, message: 'Google review status updated successfully', client });
+  } catch (error) {
+    console.error('Error updating client Google review status:', error);
+    res.status(500).json({ message: 'Server error updating Google review status' });
+  }
+};
+
 module.exports = { 
   getClients, 
   createClient, 
@@ -580,5 +599,6 @@ module.exports = {
   clientLogin, 
   changeClientPassword,
   updateClientDependents,
-  getClientProfile
+  getClientProfile,
+  submitGoogleReviewStatus
 };

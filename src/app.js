@@ -95,6 +95,21 @@ app.use('/api/v1/communications', require('./routes/communicationRoutes'));
 const { setupWorkers } = require('./queues/workers');
 setupWorkers();
 
+// Schedule Daily Missing Documents Checker (runs every day at 10:00 AM)
+const { remindersQueue } = require('./queues/queueSetup');
+if (remindersQueue && remindersQueue.add) {
+  remindersQueue.add('daily-missing-documents-check', {}, {
+    repeat: {
+      pattern: '0 10 * * *' // CRON pattern: 10:00 AM daily
+    },
+    jobId: 'daily-missing-documents-check-cron' // Deduplication ID
+  }).then(() => {
+    console.log('[Scheduler] Scheduled daily missing documents cron job.');
+  }).catch(err => {
+    console.error('[Scheduler] Failed to schedule daily missing documents cron job:', err.message);
+  });
+}
+
 // Initialize CEO Discount Automation scheduler
 const { startDiscountScheduler } = require('./services/discountAutomationService');
 startDiscountScheduler();

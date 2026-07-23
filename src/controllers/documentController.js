@@ -24,13 +24,46 @@ const getDocuments = async (req, res) => {
   }
 };
 
+const autoCategorizeDocument = (fileName) => {
+  const name = (fileName || '').toLowerCase();
+  
+  if (name.includes('passport') || name.includes('travel document') || name.includes('pasaporte') || name.includes('travel_doc')) {
+    return 'Passport';
+  }
+  if (name.includes('criminal') || name.includes('police clearance') || name.includes('background') || name.includes('antecedentes') || name.includes('police_clearance')) {
+    return 'Criminal Record';
+  }
+  if (name.includes('insurance') || name.includes('health') || name.includes('sanitas') || name.includes('seguro') || name.includes('poliza')) {
+    return 'Health Insurance';
+  }
+  if (name.includes('bank') || name.includes('statement') || name.includes('financial') || name.includes('balance') || name.includes('cuenta') || name.includes('ahorro') || name.includes('extracto')) {
+    return 'Bank Statement / Financial Proof';
+  }
+  if (name.includes('medical') || name.includes('health certificate') || name.includes('doctor') || name.includes('médico') || name.includes('certificado')) {
+    return 'Medical Certificate';
+  }
+  if (name.includes('application') || name.includes('form') || name.includes('solicitud') || name.includes('ex01') || name.includes('ex11') || name.includes('ex-01') || name.includes('ex-11')) {
+    return 'Application Form';
+  }
+  if (name.includes('translation') || name.includes('sworn') || name.includes('traducción') || name.includes('jurada')) {
+    return 'Sworn Translation Document';
+  }
+  return 'General';
+};
+
 const uploadDocument = async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ message: 'No file uploaded' });
     }
     
-    const { clientId, category, belongsTo } = req.body;
+    const { clientId, belongsTo } = req.body;
+    let category = req.body.category;
+    
+    // Auto-categorize if category is missing or generic
+    if (!category || category === 'General') {
+      category = autoCategorizeDocument(req.file.originalname);
+    }
     
     // Extract word count for PDF files
     let wordCount = 0;

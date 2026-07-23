@@ -118,6 +118,7 @@ model Client {
   
   deviceFingerprint String?
   isBlocked         Boolean  @default(false)
+  googleReviewSubmitted Boolean  @default(false)
 
   // Property Investment Service Fields
   preferableArea   String?

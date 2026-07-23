@@ -432,9 +432,123 @@ const createConsultationForLead = async (req, res) => {
       }
     });
 
-    res.status(201).json({ success: true, consultation });
+    return res.status(201).json({ success: true, consultation });
   } catch (error) {
-    res.status(500).json({ message: 'Server error creating consultation for lead', error: error.message });
+    return res.status(500).json({ message: 'Server error creating consultation for lead', error: error.message });
+  }
+};
+
+const reassignConsultant = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { consultantId, reason, allowConflict } = req.body;
+
+    if (!consultantId) {
+      return res.status(400).json({ message: 'Target consultant ID is required' });
+    }
+
+    // 1. Fetch current consultation record
+    const consultation = await prisma.consultation.findUnique({
+      where: { id },
+      include: {
+        lead: true,
+        consultant: { select: { id: true, fullName: true } }
+      }
+    });
+
+    if (!consultation) {
+      return res.status(404).json({ message: 'Consultation not found' });
+    }
+
+    // 2. Fetch new consultant details
+    const newConsultant = await prisma.user.findUnique({
+      where: { id: consultantId },
+      select: { id: true, fullName: true, role: true }
+    });
+
+    if (!newConsultant) {
+      return res.status(404).json({ message: 'New consultant not found' });
+    }
+
+    // 3. Conflict Check
+    if (!allowConflict && consultation.date && consultation.timeSlot) {
+      const conflict = await prisma.consultation.findFirst({
+        where: {
+          id: { not: id },
+          consultantId: consultantId,
+          date: consultation.date,
+          timeSlot: consultation.timeSlot,
+          status: { notIn: ['Cancelled', 'No Show'] }
+        }
+      });
+
+      if (conflict) {
+        return res.status(409).json({
+          success: false,
+          conflict: true,
+          message: `Consultant ${newConsultant.fullName} already has a session booked at ${consultation.date} ${consultation.timeSlot}.`,
+          conflictingConsultation: conflict
+        });
+      }
+    }
+
+    const oldConsultantName = consultation.consultant?.fullName || 'Unassigned';
+    const oldConsultantId = consultation.consultant?.id || null;
+    const adminUser = req.user;
+
+    // 4. Update consultation and lead
+    const updatedConsultation = await prisma.consultation.update({
+      where: { id },
+      data: {
+        consultantId,
+        internalNotes: consultation.internalNotes
+          ? `${consultation.internalNotes}\n[Reassigned by ${adminUser?.fullName || 'Admin'} from ${oldConsultantName} to ${newConsultant.fullName}. Reason: ${reason || 'N/A'}]`
+          : `[Reassigned by ${adminUser?.fullName || 'Admin'} from ${oldConsultantName} to ${newConsultant.fullName}. Reason: ${reason || 'N/A'}]`
+      },
+      include: {
+        lead: { select: { id: true, firstName: true, lastName: true, phone: true, email: true } },
+        consultant: { select: { id: true, fullName: true, role: true } }
+      }
+    });
+
+    if (consultation.leadId) {
+      await prisma.lead.update({
+        where: { id: consultation.leadId },
+        data: { assignedToId: consultantId }
+      });
+    }
+
+    // 5. Create Audit Log entry in CommunicationLog
+    if (consultation.lead?.phone) {
+      await prisma.communicationLog.create({
+        data: {
+          clientId: null,
+          phone: consultation.lead.phone,
+          name: adminUser?.fullName || 'Admin',
+          respondedByUserId: adminUser?.id || null,
+          channel: 'WHATSAPP',
+          direction: 'SYSTEM',
+          content: `[REASSIGNMENT AUDIT LOG] Consultation (${consultation.date} ${consultation.timeSlot}) reassigned from "${oldConsultantName}" (${oldConsultantId || 'none'}) to "${newConsultant.fullName}" (${newConsultant.id}) by ${adminUser?.fullName || 'Admin'}. Reason: ${reason || 'Manual override'}`,
+          deliveryStatus: 'LOGGED'
+        }
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Consultation successfully reassigned to ${newConsultant.fullName}`,
+      consultation: updatedConsultation,
+      auditLog: {
+        oldConsultant: oldConsultantName,
+        newConsultant: newConsultant.fullName,
+        reassignedBy: adminUser?.fullName || 'Admin',
+        reason: reason || 'Manual override',
+        timestamp: new Date()
+      }
+    });
+  } catch (error) {
+    console.error('Error reassigning consultation:', error.message);
+    return res.status(500).json({ message: 'Internal Server Error', error: error.message });
   }
 };
 
@@ -544,5 +658,5 @@ async function sendConsultationNotifications(consultation) {
   }
 }
 
-module.exports = { getConsultations, createConsultation, updateOutcome, respondToConsultation, createConsultationForLead };
+module.exports = { getConsultations, createConsultation, updateOutcome, respondToConsultation, createConsultationForLead, reassignConsultant };
 

@@ -183,6 +183,36 @@ const updateOutcome = async (req, res) => {
             }
           }
         }
+
+        // Schedule €250 Drip follow-ups (3 days & 7 days later) if remindersQueue is active
+        if (remindersQueue && remindersQueue.add) {
+          // Schedule Drip #2 (3 days)
+          await remindersQueue.add('consultation-completed-drip', {
+            leadId: updatedLead.id,
+            clientId: updatedLead.clientId,
+            email: updatedLead.email,
+            phone: updatedLead.phone,
+            firstName: updatedLead.firstName,
+            lastName: updatedLead.lastName,
+            dripIndex: 2
+          }, {
+            delay: 3 * 24 * 60 * 60 * 1000 // 3 days
+          });
+
+          // Schedule Drip #3 (7 days / 1 week)
+          await remindersQueue.add('consultation-completed-drip', {
+            leadId: updatedLead.id,
+            clientId: updatedLead.clientId,
+            email: updatedLead.email,
+            phone: updatedLead.phone,
+            firstName: updatedLead.firstName,
+            lastName: updatedLead.lastName,
+            dripIndex: 3
+          }, {
+            delay: 7 * 24 * 60 * 60 * 1000 // 7 days
+          });
+          console.log(`[Auto-Completed] Scheduled €250 assessment drips for lead ${updatedLead.id}`);
+        }
       }
     }
 
@@ -684,5 +714,194 @@ async function sendConsultationNotifications(consultation) {
   }
 }
 
-module.exports = { getConsultations, createConsultation, updateOutcome, respondToConsultation, createConsultationForLead, reassignConsultant };
+/**
+ * Public Reschedule Consultation
+ */
+async function publicRescheduleConsultation(req, res) {
+  try {
+    const { consultationId, date, timeSlot } = req.body;
+
+    if (!consultationId || !date || !timeSlot) {
+      return res.status(400).json({ success: false, message: 'Consultation ID, date, and timeSlot are required.' });
+    }
+
+    const consultation = await prisma.consultation.findUnique({
+      where: { id: consultationId },
+      include: { lead: true }
+    });
+
+    if (!consultation) {
+      return res.status(404).json({ success: false, message: 'Consultation not found.' });
+    }
+
+    const updatedConsultation = await prisma.consultation.update({
+      where: { id: consultationId },
+      data: {
+        date,
+        timeSlot,
+        status: 'Scheduled'
+      }
+    });
+
+    const lead = consultation.lead;
+    const clientName = lead ? `${lead.firstName} ${lead.lastName}` : 'Client';
+    const email = lead ? lead.email : null;
+    const phone = lead ? lead.phone : null;
+    const link = updatedConsultation.meetingLink || 'https://zoom.us';
+
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    const rescheduleUrl = `${frontendUrl}/#/public/lead-form?reschedule=true&consultationId=${consultationId}`;
+    const cancelUrl = `${frontendUrl}/#/public/lead-form?cancel=true&consultationId=${consultationId}`;
+    const packagesUrl = `${frontendUrl}/#/portal/login`;
+
+    // Send notifications
+    if (phone) {
+      try {
+        const { sendCustomWhatsApp } = require('../services/chatbotService');
+        const waMsg = `✈️ *Spain Visa Consultation Rescheduled!*
+
+Dear *${clientName}*,
+
+Your Spain Visa Eligibility Assessment has been successfully rescheduled.
+
+📅 *New Date:* ${date}
+⏰ *New Time:* ${timeSlot} (UTC)
+🔗 *Zoom Join Link:* ${link}
+
+─────────────
+👇 *Quick Action Links:*
+• 🔄 *Reschedule Booking:* ${rescheduleUrl}
+• ❌ *Cancel Booking:* ${cancelUrl}
+• 📦 *View Visa Packages:* ${packagesUrl}
+
+_Note: Please join within 10 minutes of appointment time to avoid automatic cancellation._`;
+        await sendCustomWhatsApp(phone, waMsg);
+      } catch (waErr) {
+        console.error('Reschedule WhatsApp error:', waErr.message);
+      }
+    }
+
+    if (email) {
+      try {
+        const { sendAppointmentConfirmationEmail } = require('../services/emailService');
+        await sendAppointmentConfirmationEmail({
+          to: email,
+          firstName: lead ? lead.firstName : 'Client',
+          date,
+          timeSlot,
+          meetingLink: link,
+          consultationId
+        });
+      } catch (emailErr) {
+        console.error('Reschedule Email error:', emailErr.message);
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Consultation rescheduled successfully',
+      data: { consultation: updatedConsultation }
+    });
+  } catch (error) {
+    console.error('Error in publicRescheduleConsultation:', error);
+    return res.status(500).json({ success: false, message: 'Failed to reschedule consultation.' });
+  }
+}
+
+/**
+ * Public Cancel Consultation
+ */
+async function publicCancelConsultation(req, res) {
+  try {
+    const { consultationId } = req.body;
+
+    if (!consultationId) {
+      return res.status(400).json({ success: false, message: 'Consultation ID is required.' });
+    }
+
+    const consultation = await prisma.consultation.findUnique({
+      where: { id: consultationId },
+      include: { lead: true }
+    });
+
+    if (!consultation) {
+      return res.status(404).json({ success: false, message: 'Consultation not found.' });
+    }
+
+    const updatedConsultation = await prisma.consultation.update({
+      where: { id: consultationId },
+      data: { status: 'Cancelled' }
+    });
+
+    if (consultation.leadId) {
+      await prisma.lead.update({
+        where: { id: consultation.leadId },
+        data: { status: 'Cancelled' }
+      }).catch(e => console.warn('Could not update lead status:', e.message));
+    }
+
+    const lead = consultation.lead;
+    const clientName = lead ? `${lead.firstName} ${lead.lastName}` : 'Client';
+    const email = lead ? lead.email : null;
+    const phone = lead ? lead.phone : null;
+
+    if (phone) {
+      try {
+        const { sendCustomWhatsApp } = require('../services/chatbotService');
+        const waMsg = `❌ *Spain Visa Consultation Cancelled*
+
+Dear *${clientName}*,
+
+Your Spain Visa Eligibility Assessment scheduled for ${consultation.date} at ${consultation.timeSlot} (UTC) has been cancelled as requested.
+
+If you ever wish to re-book, feel free to visit our booking page anytime:
+${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/public/lead-form`;
+
+        await sendCustomWhatsApp(phone, waMsg);
+      } catch (waErr) {
+        console.error('Cancel WhatsApp error:', waErr.message);
+      }
+    }
+
+    if (email) {
+      try {
+        const { sendEmail } = require('../services/emailService');
+        await sendEmail({
+          to: email,
+          subject: 'Appointment Cancelled: Spain Visa Eligibility Assessment',
+          html: `
+            <div style="font-family: Arial, sans-serif; padding: 20px;">
+              <h3>Appointment Cancellation Confirmed</h3>
+              <p>Dear ${lead ? lead.firstName : 'Client'},</p>
+              <p>Your Spain Visa Eligibility Assessment scheduled for <b>${consultation.date}</b> at <b>${consultation.timeSlot} (UTC)</b> has been cancelled.</p>
+              <p>You can book a new session anytime at <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/public/lead-form">AAA Business Consultancy</a>.</p>
+            </div>
+          `
+        });
+      } catch (emailErr) {
+        console.error('Cancel Email error:', emailErr.message);
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Consultation cancelled successfully',
+      data: { consultation: updatedConsultation }
+    });
+  } catch (error) {
+    console.error('Error in publicCancelConsultation:', error);
+    return res.status(500).json({ success: false, message: 'Failed to cancel consultation.' });
+  }
+}
+
+module.exports = {
+  getConsultations,
+  createConsultation,
+  updateOutcome,
+  respondToConsultation,
+  createConsultationForLead,
+  reassignConsultant,
+  publicRescheduleConsultation,
+  publicCancelConsultation
+};
 

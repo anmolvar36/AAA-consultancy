@@ -42,7 +42,7 @@ async function runDiscountAutomationCheck() {
         // Send email from CEO email
         try {
           const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-          const checkoutUrl = `${frontendUrl}/#/portal/payment?code=${code}`;
+          const checkoutUrl = `${frontendUrl}/#/portal/documents/${client.id}?code=${code}`;
           
           await sendEmail({
             to: client.email,

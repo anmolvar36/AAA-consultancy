@@ -289,6 +289,20 @@ exports.handleStripeWebhook = async (req, res) => {
             <p>Thank you for choosing AAA Business Consultancy!</p>
           `
         }).catch(err => console.error('[Webhook Stripe] Failed to send re-book email:', err.message));
+
+        // Schedule Phase 7 Drips & Google Review if remindersQueue is active
+        const { remindersQueue } = require('../queues/queueSetup');
+        if (remindersQueue && remindersQueue.add) {
+          // 1. Schedule Upgrade drips (3d, 7d, 10d, 14d)
+          await remindersQueue.add('paid-assessment-upgrade-drip', { clientId: client.id, dripIndex: 1 }, { delay: 3 * 24 * 60 * 60 * 1000 });
+          await remindersQueue.add('paid-assessment-upgrade-drip', { clientId: client.id, dripIndex: 2 }, { delay: 7 * 24 * 60 * 60 * 1000 });
+          await remindersQueue.add('paid-assessment-upgrade-drip', { clientId: client.id, dripIndex: 3 }, { delay: 10 * 24 * 60 * 60 * 1000 });
+          await remindersQueue.add('paid-assessment-upgrade-drip', { clientId: client.id, dripIndex: 4 }, { delay: 14 * 24 * 60 * 60 * 1000 });
+
+          // 2. Schedule Google Review request drip (3d)
+          await remindersQueue.add('google-review-request-drip', { clientId: client.id }, { delay: 3 * 24 * 60 * 60 * 1000 });
+          console.log(`[Stripe Webhook] Scheduled Phase 7 upgrade drips and Google review request for client ${client.id}`);
+        }
       }
 
     } catch (err) {

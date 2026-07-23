@@ -217,6 +217,9 @@ exports.sendSocialMessage = async (req, res) => {
 
     console.log(`Sending manual WhatsApp message to ${twilioTo}: ${text}`);
 
+    let deliveryStatus = 'SENT';
+    let failureReason = null;
+
     // 1. Send via Twilio if configured
     if (isTwilioConfigured) {
       try {
@@ -228,7 +231,8 @@ exports.sendSocialMessage = async (req, res) => {
         });
       } catch (err) {
         console.error('Twilio manual send failed:', err.message);
-        return res.status(500).json({ message: `Twilio Send Failed: ${err.message}` });
+        deliveryStatus = 'FAILED';
+        failureReason = err.message;
       }
     } else {
       console.log(`[MANUAL TWILIO DRY-RUN] To: ${twilioTo}, Text: ${text}`);
@@ -255,7 +259,8 @@ exports.sendSocialMessage = async (req, res) => {
         channel: 'WHATSAPP',
         direction: 'OUTBOUND',
         content: text,
-        deliveryStatus: 'SENT'
+        deliveryStatus: deliveryStatus,
+        failureReason: failureReason
       },
       include: {
         respondedByUser: {

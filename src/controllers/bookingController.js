@@ -47,6 +47,7 @@ exports.createEligibilityBooking = async (req, res) => {
     if (blockedClient) {
       return res.status(403).json({
         success: false,
+        code: 'BLOCKED',
         message: 'Your booking cannot be processed automatically. Contact support.',
       });
     }
@@ -69,7 +70,29 @@ exports.createEligibilityBooking = async (req, res) => {
     if (blacklisted || matchesBlacklistByName) {
       return res.status(403).json({
         success: false,
+        code: 'BLACKLISTED',
         message: 'This profile is not eligible for further eligibility assessments due to a previous missed appointment.',
+      });
+    }
+
+    // 2c. Check for Duplicate Active Bookings
+    const activeLead = await prisma.lead.findFirst({
+      where: {
+        OR: [
+          { email: email.toLowerCase() },
+          { phone: { contains: normalizedPhone } }
+        ],
+        status: {
+          notIn: ['Lost Lead', 'Spam', 'Cold Lead', 'No Show', 'Completed']
+        }
+      }
+    });
+
+    if (activeLead) {
+      return res.status(409).json({
+        success: false,
+        code: 'DUPLICATE_LEAD',
+        message: 'You already have an active booking or application under this email/phone.',
       });
     }
 
@@ -638,5 +661,58 @@ exports.checkoutTranslationDocument = async (req, res) => {
   } catch (error) {
     console.error('Translation Checkout Error:', error);
     return res.status(500).json({ success: false, error: 'Internal Server Error during checkout' });
+  }
+};
+
+exports.verifyPrefillToken = async (req, res) => {
+  try {
+    const { token } = req.query;
+    if (!token) {
+      return res.status(400).json({ success: false, message: 'Token is required' });
+    }
+
+    const jwt = require('jsonwebtoken');
+    const secret = process.env.JWT_SECRET || 'secret123';
+    let decoded;
+    try {
+      decoded = jwt.verify(token, secret);
+    } catch (jwtErr) {
+      return res.status(401).json({ success: false, message: 'Invalid or expired re-booking token' });
+    }
+
+    const { clientId } = decoded;
+    if (!clientId) {
+      return res.status(400).json({ success: false, message: 'Invalid token payload' });
+    }
+
+    // Retrieve client details
+    const client = await prisma.client.findUnique({
+      where: { id: clientId }
+    });
+
+    if (!client) {
+      return res.status(404).json({ success: false, message: 'Client not found' });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        firstName: client.firstName,
+        lastName: client.lastName,
+        email: client.email,
+        phone: client.phone,
+        nationality: client.nationality || '',
+        countryOfResidence: client.countryOfResidence || '',
+        preferredLanguage: client.preferredLanguage || 'English',
+        serviceType: client.serviceType || '',
+        applicantsCount: client.applicantsCount || 'Main Only',
+        preferableArea: client.preferableArea || '',
+        budget: client.budget || ''
+      }
+    });
+
+  } catch (error) {
+    console.error('Error verifying prefill token:', error);
+    return res.status(500).json({ success: false, error: 'Internal Server Error' });
   }
 };

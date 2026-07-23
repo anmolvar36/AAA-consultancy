@@ -113,5 +113,91 @@ const processPaymentEvent = async (event) => {
 };
 
 module.exports = {
-  processPaymentEvent
+  processPaymentEvent,
+  createNoShowCheckoutSession: async (clientId) => {
+    const client = await prisma.client.findUnique({
+      where: { id: clientId }
+    });
+
+    if (!client) throw new Error(`Client ${clientId} not found`);
+
+    // Create database payment entry
+    const payment = await prisma.payment.create({
+      data: {
+        clientId: client.id,
+        amount: 262.50, // €250 + 5% VAT
+        status: 'Pending',
+        paymentMethod: 'Stripe',
+        dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
+      }
+    });
+
+    const stripeSecret = process.env.STRIPE_SECRET_KEY || 'sk_test_mock';
+    const stripe = require('stripe')(stripeSecret);
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: [{
+        price_data: {
+          currency: 'eur',
+          product_data: {
+            name: 'Professional Case Assessment',
+            description: 'Includes One-to-One Case Review & Eligibility Evaluation. Deductible within 14 days. (5% VAT Included)',
+          },
+          unit_amount: 26250, // €262.50 in cents
+        },
+        quantity: 1,
+      }],
+      mode: 'payment',
+      consent_collection: {
+        terms_of_service: 'required',
+      },
+      success_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/public/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/public/booking`,
+      metadata: {
+        clientId: client.id,
+        paymentId: payment.id,
+        type: 'no_show_case_assessment'
+      }
+    });
+
+    // Update payment gateway ID
+    await prisma.payment.update({
+      where: { id: payment.id },
+      data: { gatewayId: session.id }
+    });
+
+    return session.url;
+  },
+
+  checkAndApplyDeduction: async (clientId, basePrice) => {
+    // Find any paid case assessment payment in the last 14 days
+    const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+    const paidAssessment = await prisma.payment.findFirst({
+      where: {
+        clientId: clientId,
+        status: 'Paid',
+        amount: 262.50, // The €250 + 5% VAT payment
+        createdAt: {
+          gte: fourteenDaysAgo
+        }
+      }
+    });
+
+    if (paidAssessment) {
+      // Deduct €250 from basePrice
+      const finalPrice = Math.max(0, basePrice - 250);
+      return {
+        deducted: true,
+        price: finalPrice,
+        creditApplied: 250
+      };
+    }
+
+    return {
+      deducted: false,
+      price: basePrice,
+      creditApplied: 0
+    };
+  }
 };

@@ -15,6 +15,7 @@ const bookingLimiter = rateLimit({
 
 // Eligibility Booking
 router.post('/eligibility', bookingLimiter, bookingController.createEligibilityBooking);
+router.get('/prefill', bookingController.verifyPrefillToken);
 
 // Translation Upload
 router.post('/translation/upload', upload.single('document'), bookingController.uploadTranslationDocument);

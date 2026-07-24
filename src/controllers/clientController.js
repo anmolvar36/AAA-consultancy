@@ -263,11 +263,14 @@ const createClient = async (req, res) => {
 const updateClientStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status, visaStatus } = req.body;
+    const { status, visaStatus, nextFollowUpDate } = req.body;
     
     const data = {};
     if (status) data.status = status;
     if (visaStatus) data.visaStatus = visaStatus;
+    if (nextFollowUpDate !== undefined) {
+      data.nextFollowUpDate = nextFollowUpDate ? new Date(nextFollowUpDate) : null;
+    }
     
     const client = await prisma.client.update({
       where: { id },

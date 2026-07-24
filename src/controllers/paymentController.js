@@ -638,24 +638,60 @@ const createStripeCheckoutSession = async (req, res) => {
 
 const verifyStripeCheckoutSession = async (req, res) => {
   try {
-    const { sessionId } = req.body;
+    const { sessionId, paymentId } = req.body;
+    let finalSessionId = sessionId;
 
-    if (!stripe) {
-      return res.status(200).json({ success: true, message: 'Mock payment verified successfully.' });
+    if (!finalSessionId && paymentId) {
+      const paymentObj = await prisma.payment.findUnique({ where: { id: paymentId } });
+      if (paymentObj) {
+        finalSessionId = paymentObj.gatewayId;
+      }
     }
 
-    const session = await stripe.checkout.sessions.retrieve(sessionId);
-
-    if (session.payment_status === 'paid') {
-      const paymentId = session.metadata?.paymentId;
-      const clientId = session.metadata?.clientId;
-      const packageId = session.metadata?.packageId;
-
+    if (!stripe) {
+      // Mock payment mode verification
       if (paymentId) {
         const payment = await prisma.payment.findUnique({ where: { id: paymentId } });
         if (payment && payment.status !== 'Paid') {
+          const finalPrice = payment.amount - (payment.discount || 0);
           await prisma.payment.update({
             where: { id: paymentId },
+            data: {
+              status: 'Paid',
+              transactionId: `mock-txn-${Date.now()}`,
+              totalPaid: finalPrice
+            }
+          });
+
+          await prisma.client.update({
+            where: { id: payment.clientId },
+            data: {
+              documentUploadAllowed: true,
+              status: 'Payment Received',
+              visaStatus: 'Document Preparation'
+            }
+          });
+        }
+      }
+      return res.status(200).json({ success: true, message: 'Mock payment verified successfully.' });
+    }
+
+    if (!finalSessionId) {
+      return res.status(400).json({ success: false, message: 'No session ID or payment ID provided.' });
+    }
+
+    const session = await stripe.checkout.sessions.retrieve(finalSessionId);
+
+    if (session.payment_status === 'paid') {
+      const metadataPaymentId = session.metadata?.paymentId || paymentId;
+      const metadataClientId = session.metadata?.clientId;
+      const packageId = session.metadata?.packageId;
+
+      if (metadataPaymentId) {
+        const payment = await prisma.payment.findUnique({ where: { id: metadataPaymentId } });
+        if (payment && payment.status !== 'Paid') {
+          await prisma.payment.update({
+            where: { id: metadataPaymentId },
             data: {
               status: 'Paid',
               transactionId: session.id,
@@ -665,7 +701,7 @@ const verifyStripeCheckoutSession = async (req, res) => {
           });
 
           const client = await prisma.client.update({
-            where: { id: clientId },
+            where: { id: metadataClientId || payment.clientId },
             data: {
               packageId: packageId || undefined,
               documentUploadAllowed: true,

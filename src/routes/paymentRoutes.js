@@ -22,7 +22,7 @@ router.route('/')
 router.post('/generate-link', authMiddleware, rbacMiddleware(['super_admin', 'admin', 'finance', 'operations', 'consultant']), generatePaymentLink);
 router.patch('/:id/status', authMiddleware, rbacMiddleware(['super_admin', 'admin', 'finance']), updatePaymentStatus);
 router.post('/create-checkout-session', authMiddleware, createStripeCheckoutSession);
-router.post('/verify-checkout-session', authMiddleware, verifyStripeCheckoutSession);
+router.post('/verify-checkout-session', verifyStripeCheckoutSession);
 
 // Refunds
 router.get('/refunds', authMiddleware, rbacMiddleware(['super_admin', 'admin', 'operations', 'finance']), getRefundRequests);

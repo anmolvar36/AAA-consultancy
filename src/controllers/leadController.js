@@ -13,6 +13,7 @@ const getLeads = async (req, res) => {
     // Map to frontend expectation
     const mapped = leads.map(l => ({
       ...l,
+      createdDate: l.createdAt,
       name: `${l.firstName} ${l.lastName}`,
       serviceId: l.serviceType,
       assignedConsultantId: l.assignedToId,

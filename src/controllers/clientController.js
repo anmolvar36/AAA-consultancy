@@ -192,15 +192,36 @@ const createClient = async (req, res) => {
         html: renderedHtml
       }).catch(err => console.error('Failed to send auto welcome email:', err));
 
-      // Also send WhatsApp welcome message with portal credentials
-      if (client.phone) {
-        try {
-          const { sendCustomWhatsApp } = require('../services/chatbotService');
-          const waMsg = `Hello *${clientFullName}*,\n\nWelcome to *AAA Business Consultancy*! 🎉\n\nYour file has been initialized and your Client Portal is now ready.\n\n*Access Credentials:*\n🔗 *Portal Link:* ${portalUrl}\n👤 *Username:* ${client.email}\n🔑 *Temporary Password:* \`${plainPassword}\`\n\n_Note: For security, you will be prompted to change this temporary password immediately upon your first login._`;
-          sendCustomWhatsApp(client.phone, waMsg).catch(err => console.error('Failed to send welcome WhatsApp message:', err.message));
-        } catch (waErr) {
-          console.error('Failed to load welcome WhatsApp service:', waErr.message);
+      // Dispatch Invoice & Payment Link notifications (Email + WhatsApp) with portal credentials
+      try {
+        const { sendInvoiceNotificationEmail } = require('../services/emailService');
+        const { sendInvoiceWhatsApp } = require('../services/whatsappService');
+        const clientFullName = `${client.firstName} ${client.lastName}`.trim();
+
+        sendInvoiceNotificationEmail({
+          to: client.email,
+          clientName: clientFullName,
+          amount: 2000,
+          discount: 0,
+          netAmount: 2000,
+          serviceType: client.serviceType,
+          portalUrl,
+          tempPassword: plainPassword
+        }).catch(err => console.error('[Client Init Invoice Email Error]:', err.message));
+
+        if (client.phone) {
+          sendInvoiceWhatsApp({
+            client,
+            amount: 2000,
+            discount: 0,
+            netAmount: 2000,
+            serviceType: client.serviceType,
+            portalUrl,
+            tempPassword: plainPassword
+          }).catch(err => console.error('[Client Init Invoice WA Error]:', err.message));
         }
+      } catch (invErr) {
+        console.error('[Client Init Invoice Notification Error]:', invErr.message);
       }
     }
 

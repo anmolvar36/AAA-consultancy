@@ -234,3 +234,29 @@ Please log into your client portal to upload your documents and track your order
   }
 };
 
+/**
+ * Sends automated Invoice & Portal Account WhatsApp message.
+ */
+exports.sendInvoiceWhatsApp = async ({ client, amount, discount, netAmount, serviceType, checkoutUrl, portalUrl, tempPassword }) => {
+  try {
+    if (!client || !client.phone) {
+      console.warn('[Invoice WhatsApp] client or client.phone is missing');
+      return;
+    }
+
+    const { sendCustomWhatsApp } = require('./chatbotService');
+    const loginUrl = portalUrl || `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/portal/login`;
+    const paymentLink = checkoutUrl || loginUrl;
+    const clientName = `${client.firstName} ${client.lastName}`.trim();
+    const finalPrice = Number(netAmount || amount || 0);
+
+    const message = `Hello *${clientName}*, welcome to AAA Business Consultancy! 🇪🇸\n\nYour Spain Relocation profile has been initialized.\n\n💳 *Invoice Amount:* €${finalPrice.toLocaleString()}\n📌 *Service:* ${serviceType || 'Spain Relocation Legal Package'}\n\n1️⃣ *Pay Invoice (1-Click Stripe Checkout):*\n🔗 ${paymentLink}\n\n2️⃣ *Client Portal Login Credentials:*\n🔗 ${loginUrl}\n👤 *Username:* ${client.email}\n🔑 *Temp Password:* ${tempPassword || 'Set on Portal'}\n\nThank you for choosing AAA Business Consultancy!`;
+
+    await sendCustomWhatsApp(client.phone, message);
+    console.log(`[Invoice WhatsApp] Dispatched invoice notification to ${client.phone}`);
+  } catch (err) {
+    console.error('[Invoice WhatsApp] Error dispatching WhatsApp notification:', err.message);
+  }
+};
+
+

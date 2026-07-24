@@ -247,3 +247,66 @@ exports.sendAppointmentConfirmationEmail = async ({ to, firstName, date, timeSlo
   });
 };
 
+/**
+ * Sends a branded Invoice & Payment Link Email to the client.
+ */
+exports.sendInvoiceNotificationEmail = async ({ to, clientName, amount, discount, netAmount, serviceType, checkoutUrl, portalUrl, tempPassword }) => {
+  const loginUrl = portalUrl || `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/portal/login`;
+  const paymentLink = checkoutUrl || loginUrl;
+
+  const html = `
+    <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 620px; margin: auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; background-color: #ffffff; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+      <div style="background: linear-gradient(135deg, #0f0c29, #302b63); padding: 24px; text-align: center; color: #ffffff;">
+        <h2 style="margin: 0; font-size: 22px; font-weight: 800;">AAA Business Consultancy</h2>
+        <p style="margin: 6px 0 0; font-size: 14px; opacity: 0.85;">Spain Relocation & Visa Legal Services</p>
+      </div>
+
+      <div style="padding: 28px;">
+        <h3 style="color: #1e293b; margin-top: 0; font-size: 18px;">📄 Spain Visa Relocation Invoice & Portal Account</h3>
+        <p style="color: #475569; line-height: 1.6;">Dear <b>${clientName}</b>,</p>
+        <p style="color: #475569; line-height: 1.6;">Welcome to AAA Business Consultancy! Your relocation folder has been initialized. Please find your invoice details below:</p>
+
+        <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px; margin: 20px 0;">
+          <h4 style="margin-top: 0; color: #1e293b; font-size: 15px;">💳 Invoice Summary:</h4>
+          <ul style="margin: 0; padding-left: 20px; color: #334155; line-height: 1.8;">
+            <li><b>Service Selected:</b> ${serviceType || 'Spain Relocation Legal Package'}</li>
+            <li><b>Base Amount:</b> €${Number(amount || 0).toLocaleString()}</li>
+            ${discount > 0 ? `<li><b>Discount Applied:</b> -€${Number(discount).toLocaleString()}</li>` : ''}
+            <li><b>Total Amount Due:</b> <strong style="color: #2563eb; font-size: 16px;">€${Number(netAmount || amount || 0).toLocaleString()}</strong></li>
+          </ul>
+
+          <div style="text-align: center; margin-top: 20px;">
+            <a href="${paymentLink}" style="display: inline-block; padding: 12px 26px; background-color: #2563eb; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 700; font-size: 14px;">💳 Proceed to Secure Stripe Payment</a>
+          </div>
+        </div>
+
+        ${tempPassword ? `
+        <div style="background-color: #f1f5f9; border-left: 4px solid #4f46e5; border-radius: 6px; padding: 16px; margin: 20px 0;">
+          <h4 style="margin: 0 0 8px; color: #4f46e5; font-size: 14px;">🔐 Client Portal Access Credentials:</h4>
+          <p style="margin: 4px 0; font-size: 13px; color: #334155;"><b>Portal Link:</b> <a href="${loginUrl}" style="color: #2563eb; font-weight: 600;">Access Portal Here</a></p>
+          <p style="margin: 4px 0; font-size: 13px; color: #334155;"><b>Username:</b> ${to}</p>
+          <p style="margin: 4px 0; font-size: 13px; color: #334155;"><b>Temporary Password:</b> <code style="background-color: #ffffff; padding: 2px 8px; border-radius: 4px; border: 1px solid #cbd5e1; font-weight: bold; color: #e11d48;">${tempPassword}</code></p>
+          <p style="font-size: 11px; color: #ef4444; margin: 8px 0 0;">* Note: You can also log in to pay directly inside your portal and change your password.</p>
+        </div>
+        ` : ''}
+
+        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+        <p style="font-size: 12px; color: #64748b; line-height: 1.5;">
+          If you have any questions or require assistance, please reply directly to this email or contact your assigned consultant.
+        </p>
+      </div>
+
+      <div style="background-color: #f8fafc; border-top: 1px solid #e2e8f0; padding: 16px; text-align: center; color: #94a3b8; font-size: 12px;">
+        © 2026 AAA Business Consultancy · All rights reserved
+      </div>
+    </div>
+  `;
+
+  return exports.sendEmail({
+    to,
+    subject: `Relocation Invoice & Client Portal Account - AAA Business Consultancy 🇪🇸`,
+    html
+  });
+};
+
+

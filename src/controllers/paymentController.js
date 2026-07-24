@@ -117,6 +117,37 @@ const generatePaymentLink = async (req, res) => {
       }
     }
 
+    // Auto-dispatch Email & WhatsApp Invoice notifications to client
+    try {
+      const clientObj = await prisma.client.findUnique({ where: { id: clientId } });
+      if (clientObj) {
+        const clientName = `${clientObj.firstName} ${clientObj.lastName}`.trim();
+        const { sendInvoiceNotificationEmail } = require('../services/emailService');
+        const { sendInvoiceWhatsApp } = require('../services/whatsappService');
+
+        sendInvoiceNotificationEmail({
+          to: clientObj.email,
+          clientName,
+          amount: Number(amount) || 0,
+          discount: Number(discount) || 0,
+          netAmount: finalAmount,
+          serviceType: clientObj.serviceType,
+          checkoutUrl: paymentUrl
+        }).catch(err => console.error('[Auto-Invoice Email Error]:', err.message));
+
+        sendInvoiceWhatsApp({
+          client: clientObj,
+          amount: Number(amount) || 0,
+          discount: Number(discount) || 0,
+          netAmount: finalAmount,
+          serviceType: clientObj.serviceType,
+          checkoutUrl: paymentUrl
+        }).catch(err => console.error('[Auto-Invoice WA Error]:', err.message));
+      }
+    } catch (dispatchErr) {
+      console.error('[Auto-Invoice Notifications Error]:', dispatchErr.message);
+    }
+
     res.status(201).json({
       ...payment,
       paymentUrl

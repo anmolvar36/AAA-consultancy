@@ -362,8 +362,8 @@ model AuditLog {
   id               String   @id @default(uuid())
   applicationId    String?
   applicationCycle ApplicationCycle? @relation(fields: [applicationId], references: [id])
-  actorId          String?  // System, User UUID, or Webhook ID
-  action           String?  // e.g., STATUS_CHANGED, DOC_UPLOADED
+  actorId          String?   // System, User UUID, or Webhook ID
+  action           String?   // e.g., STATUS_CHANGED, DOC_UPLOADED
   previousState    Json?
   newState         Json?
   createdAt        DateTime @default(now()) // Immutable (No updateAt)

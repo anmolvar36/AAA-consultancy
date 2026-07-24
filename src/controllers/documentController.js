@@ -235,10 +235,22 @@ const uploadDocument = async (req, res) => {
             console.error('Failed to notify operator via WhatsApp:', e.message);
           });
         }
-      } else {
-        console.log(`[Notification] Client ${clientName} has no assigned operator — notification skipped.`);
       }
     }
+
+    // Log activity
+    const { logActivity } = require('../services/auditService');
+    const uploaderName = req.user ? (req.user.fullName || req.user.email) : (client ? `${client.firstName} ${client.lastName}` : 'Client');
+    const uploaderRole = req.user ? (req.user.role || 'agent') : 'client';
+    logActivity({
+      clientId: clientId || undefined,
+      documentId: document.id,
+      actorId: req.user?.id || clientId || 'client',
+      actorName: uploaderName,
+      actorRole: uploaderRole,
+      action: 'DOC_UPLOADED',
+      description: `${uploaderName} uploaded document "${document.name}" under category "${document.category}".`
+    });
 
     res.status(201).json(document);
   } catch (error) {
@@ -255,6 +267,21 @@ const reviewDocument = async (req, res) => {
     const document = await prisma.document.update({
       where: { id },
       data: { status, comment: feedbackComment }
+    });
+
+    const { logActivity } = require('../services/auditService');
+    const reviewerName = req.user ? (req.user.fullName || req.user.email) : 'Operator';
+    const reviewerRole = req.user ? (req.user.role || 'staff') : 'staff';
+    const actionType = status === 'VERIFIED' ? 'DOC_VERIFIED' : status === 'REJECTED' ? 'DOC_REJECTED' : 'DOC_REVIEWED';
+
+    logActivity({
+      clientId: document.clientId || undefined,
+      documentId: document.id,
+      actorId: req.user?.id || 'operator',
+      actorName: reviewerName,
+      actorRole: reviewerRole,
+      action: actionType,
+      description: `${reviewerName} marked document "${document.name}" as ${status}.${feedbackComment ? ` Comment: "${feedbackComment}"` : ''}`
     });
     
     res.json(document);

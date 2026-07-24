@@ -219,6 +219,18 @@ const updateLeadStatus = async (req, res) => {
       }
     }
 
+    const { logActivity } = require('../services/auditService');
+    const actorName = req.user ? (req.user.fullName || req.user.email) : 'System';
+    const actorRole = req.user ? (req.user.role || 'staff') : 'system';
+    logActivity({
+      leadId: lead.id,
+      actorId: req.user?.id || 'system',
+      actorName,
+      actorRole,
+      action: 'STATUS_CHANGED',
+      description: `Lead status updated to "${status}" by ${actorName}.`
+    });
+
     res.json(lead);
   } catch (error) {
     res.status(500).json({ message: 'Server error updating status' });

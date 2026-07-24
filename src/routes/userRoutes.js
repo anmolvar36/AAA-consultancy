@@ -1,8 +1,10 @@
 const express = require('express');
-const { getAgents, createUser, updateUser, deleteUser, resetUserPassword } = require('../controllers/userController');
+const { getAgents, createUser, updateUser, deleteUser, resetUserPassword, updateSuperAdminProfile } = require('../controllers/userController');
 const { authMiddleware, rbacMiddleware } = require('../middlewares/authMiddleware');
 
 const router = express.Router();
+
+router.put('/profile/super-admin', authMiddleware, rbacMiddleware(['super_admin']), updateSuperAdminProfile);
 
 router.route('/')
   .post(authMiddleware, rbacMiddleware(['super_admin', 'admin']), createUser);

@@ -15,6 +15,7 @@ const getClients = async (req, res) => {
     const mapped = clients.map(c => ({
       ...c,
       onboardingDate: c.createdAt,
+      assignedAt: c.assignedAt || c.createdAt,
       name: `${c.firstName} ${c.lastName}`,
       serviceId: c.serviceType,
       assignedConsultantName: c.assignedTo?.fullName,
@@ -125,8 +126,8 @@ const createClient = async (req, res) => {
           nationality,
           clientCode,
           serviceType: serviceType || serviceId,
-          assignedToId: finalAssignedTo,
-          packageId,
+          assignedToId: finalAssignedTo || undefined,
+          assignedAt: finalAssignedTo ? new Date() : undefined,
           applicantsCount: String(applicantsCount),
           dependentsDetails: finalDeps || undefined,
           status: status || 'Waiting for Payment',
@@ -650,7 +651,10 @@ const updateClient = async (req, res) => {
 
     // Consultant assignment
     const finalConsultant = assignedToId || assignedConsultantId;
-    if (finalConsultant !== undefined) data.assignedToId = finalConsultant || null;
+    if (finalConsultant !== undefined) {
+      data.assignedToId = finalConsultant || null;
+      if (finalConsultant) data.assignedAt = new Date();
+    }
 
     // Case comments — accept either field name from frontend
     const incomingComments = caseComments || comments;

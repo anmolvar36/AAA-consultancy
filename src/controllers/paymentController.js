@@ -164,6 +164,20 @@ const updatePaymentStatus = async (req, res) => {
     const { status, paymentMethod, transactionId } = req.body;
     
     const payment = await prisma.payment.findUnique({ where: { id } });
+    if (!payment) {
+      return res.status(404).json({ message: 'Payment not found' });
+    }
+
+    let snapshotRate = 0;
+    if (status === 'Paid') {
+      const clientWithAgent = await prisma.client.findUnique({
+        where: { id: payment.clientId },
+        include: { assignedTo: true }
+      });
+      if (clientWithAgent && clientWithAgent.assignedTo) {
+        snapshotRate = clientWithAgent.assignedTo.commissionRate || 0;
+      }
+    }
     
     const updatedPayment = await prisma.payment.update({
       where: { id },
@@ -171,7 +185,8 @@ const updatePaymentStatus = async (req, res) => {
         status, 
         paymentMethod, 
         transactionId,
-        totalPaid: status === 'Paid' ? (payment.amount - (payment.discount || 0)) : payment.totalPaid
+        totalPaid: status === 'Paid' ? (payment.amount - (payment.discount || 0)) : payment.totalPaid,
+        commissionRate: status === 'Paid' ? snapshotRate : undefined
       }
     });
     
@@ -409,6 +424,39 @@ const updateCommissionRate = async (req, res) => {
   try {
     const { agentId, type, value } = req.body;
     
+    // 1. Get the agent profile
+    const agentObj = await prisma.user.findUnique({
+      where: { id: agentId }
+    });
+
+    if (!agentObj) {
+      return res.status(404).json({ message: 'Agent not found' });
+    }
+
+    // 2. Calculate current revenue for this agent
+    const agentClients = await prisma.client.findMany({
+      where: { assignedToId: agentId },
+      select: { id: true }
+    });
+    const clientIds = agentClients.map(c => c.id);
+    const paidPayments = await prisma.payment.findMany({
+      where: { clientId: { in: clientIds }, status: 'Paid' },
+      select: { amount: true }
+    });
+    const totalRevenue = paidPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
+
+    // 3. Create Rate History Log
+    await prisma.commissionRateHistory.create({
+      data: {
+        agentId,
+        oldRate: agentObj.commissionRate || 0,
+        newRate: Number(value),
+        changedById: req.user.id,
+        revenueAtChange: totalRevenue
+      }
+    });
+
+    // 4. Update agent rate
     await prisma.user.update({
       where: { id: agentId },
       data: {
@@ -419,6 +467,7 @@ const updateCommissionRate = async (req, res) => {
     
     res.json({ success: true });
   } catch (error) {
+    console.error('Error updating commission rate:', error);
     res.status(500).json({ message: 'Server error updating commission rate' });
   }
 };
@@ -437,7 +486,9 @@ const getCommissionsReport = async (req, res) => {
     
     const report = payments.map(p => {
       const agent = p.client?.assignedTo;
-      const rate = agent?.commissionRate || 0;
+      const rate = p.commissionRate !== null && p.commissionRate !== undefined 
+        ? p.commissionRate 
+        : (agent?.commissionRate || 0);
       const commissionEarned = p.amount * (rate / 100);
       
       // For now, assume commission is accrued (pending) unless agent has explicitly been paid
@@ -669,34 +720,92 @@ const createStripeCheckoutSession = async (req, res) => {
 
 const verifyStripeCheckoutSession = async (req, res) => {
   try {
-    const { sessionId } = req.body;
+    const { sessionId, paymentId } = req.body;
+    let finalSessionId = sessionId;
 
-    if (!stripe) {
-      return res.status(200).json({ success: true, message: 'Mock payment verified successfully.' });
+    if (!finalSessionId && paymentId) {
+      const paymentObj = await prisma.payment.findUnique({ where: { id: paymentId } });
+      if (paymentObj) {
+        finalSessionId = paymentObj.gatewayId;
+      }
     }
 
-    const session = await stripe.checkout.sessions.retrieve(sessionId);
-
-    if (session.payment_status === 'paid') {
-      const paymentId = session.metadata?.paymentId;
-      const clientId = session.metadata?.clientId;
-      const packageId = session.metadata?.packageId;
-
+    if (!stripe) {
+      // Mock payment mode verification
       if (paymentId) {
         const payment = await prisma.payment.findUnique({ where: { id: paymentId } });
         if (payment && payment.status !== 'Paid') {
+          const finalPrice = payment.amount - (payment.discount || 0);
+          
+          let snapshotRate = 0;
+          const clientWithAgent = await prisma.client.findUnique({
+            where: { id: payment.clientId },
+            include: { assignedTo: true }
+          });
+          if (clientWithAgent && clientWithAgent.assignedTo) {
+            snapshotRate = clientWithAgent.assignedTo.commissionRate || 0;
+          }
+
           await prisma.payment.update({
             where: { id: paymentId },
             data: {
               status: 'Paid',
+              transactionId: `mock-txn-${Date.now()}`,
+              totalPaid: finalPrice,
+              commissionRate: snapshotRate
+            }
+          });
+
+          await prisma.client.update({
+            where: { id: payment.clientId },
+            data: {
+              documentUploadAllowed: true,
+              status: 'Payment Received',
+              visaStatus: 'Document Preparation'
+            }
+          });
+        }
+      }
+      return res.status(200).json({ success: true, message: 'Mock payment verified successfully.' });
+    }
+
+    if (!finalSessionId) {
+      return res.status(400).json({ success: false, message: 'No session ID or payment ID provided.' });
+    }
+
+    const session = await stripe.checkout.sessions.retrieve(finalSessionId);
+
+    if (session.payment_status === 'paid') {
+      const metadataPaymentId = session.metadata?.paymentId || paymentId;
+      const metadataClientId = session.metadata?.clientId;
+      const packageId = session.metadata?.packageId;
+
+      if (metadataPaymentId) {
+        const payment = await prisma.payment.findUnique({ where: { id: metadataPaymentId } });
+        if (payment && payment.status !== 'Paid') {
+          
+          let snapshotRate = 0;
+          const clientWithAgent = await prisma.client.findUnique({
+            where: { id: payment.clientId },
+            include: { assignedTo: true }
+          });
+          if (clientWithAgent && clientWithAgent.assignedTo) {
+            snapshotRate = clientWithAgent.assignedTo.commissionRate || 0;
+          }
+
+          await prisma.payment.update({
+            where: { id: metadataPaymentId },
+            data: {
+              status: 'Paid',
               transactionId: session.id,
               paymentMethod: 'Stripe',
-              totalPaid: session.amount_total / 100
+              totalPaid: session.amount_total / 100,
+              commissionRate: snapshotRate
             }
           });
 
           const client = await prisma.client.update({
-            where: { id: clientId },
+            where: { id: metadataClientId || payment.clientId },
             data: {
               packageId: packageId || undefined,
               documentUploadAllowed: true,
@@ -727,6 +836,25 @@ const verifyStripeCheckoutSession = async (req, res) => {
   }
 };
 
+const getCommissionHistory = async (req, res) => {
+  try {
+    const { agentId } = req.params;
+    const history = await prisma.commissionRateHistory.findMany({
+      where: { agentId },
+      include: {
+        changedBy: {
+          select: { fullName: true, email: true, role: true }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json(history);
+  } catch (error) {
+    console.error('Error fetching commission rate history:', error);
+    res.status(500).json({ message: 'Server error fetching commission history' });
+  }
+};
+
 module.exports = { 
   getPayments, 
   generatePaymentLink, 
@@ -738,5 +866,6 @@ module.exports = {
   updateCommissionRate,
   getCommissionsReport,
   createStripeCheckoutSession,
-  verifyStripeCheckoutSession
+  verifyStripeCheckoutSession,
+  getCommissionHistory
 };

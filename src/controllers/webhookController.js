@@ -204,6 +204,16 @@ exports.handleStripeWebhook = async (req, res) => {
     const paymentId = session.metadata.paymentId;
     
     try {
+      // Get agent's commission rate
+      let snapshotRate = 0;
+      const clientWithAgent = await prisma.client.findUnique({
+        where: { id: clientId },
+        include: { assignedTo: true }
+      });
+      if (clientWithAgent && clientWithAgent.assignedTo) {
+        snapshotRate = clientWithAgent.assignedTo.commissionRate || 0;
+      }
+
       // 1. Update Payment status to Paid
       await prisma.payment.update({
         where: { id: paymentId },
@@ -211,7 +221,8 @@ exports.handleStripeWebhook = async (req, res) => {
           status: 'Paid',
           transactionId: session.id,
           paymentMethod: 'Stripe',
-          totalPaid: session.amount_total ? session.amount_total / 100 : 262.50
+          totalPaid: session.amount_total ? session.amount_total / 100 : 262.50,
+          commissionRate: snapshotRate
         }
       });
 

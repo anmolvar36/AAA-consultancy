@@ -10,7 +10,8 @@ const {
   updateCommissionRate,
   getCommissionsReport,
   createStripeCheckoutSession,
-  verifyStripeCheckoutSession
+  verifyStripeCheckoutSession,
+  getCommissionHistory
 } = require('../controllers/paymentController');
 const { authMiddleware, rbacMiddleware } = require('../middlewares/authMiddleware');
 
@@ -22,7 +23,7 @@ router.route('/')
 router.post('/generate-link', authMiddleware, rbacMiddleware(['super_admin', 'admin', 'finance', 'operations', 'consultant']), generatePaymentLink);
 router.patch('/:id/status', authMiddleware, rbacMiddleware(['super_admin', 'admin', 'finance']), updatePaymentStatus);
 router.post('/create-checkout-session', authMiddleware, createStripeCheckoutSession);
-router.post('/verify-checkout-session', authMiddleware, verifyStripeCheckoutSession);
+router.post('/verify-checkout-session', verifyStripeCheckoutSession);
 
 // Refunds
 router.get('/refunds', authMiddleware, rbacMiddleware(['super_admin', 'admin', 'operations', 'finance']), getRefundRequests);
@@ -33,5 +34,6 @@ router.patch('/refunds/:id/status', authMiddleware, rbacMiddleware(['super_admin
 router.get('/commissions/rates', authMiddleware, rbacMiddleware(['super_admin', 'admin', 'finance', 'operations']), getCommissionRates);
 router.patch('/commissions/rates', authMiddleware, rbacMiddleware(['super_admin', 'admin', 'finance']), updateCommissionRate);
 router.get('/commissions/report', authMiddleware, rbacMiddleware(['super_admin', 'admin', 'finance']), getCommissionsReport);
+router.get('/commissions/history/:agentId', authMiddleware, rbacMiddleware(['super_admin', 'admin', 'finance', 'operations']), getCommissionHistory);
 
 module.exports = router;

@@ -39,6 +39,8 @@ model User {
   assignedClients  Client[] @relation("AgentClients")
   consultations    Consultation[] @relation("AgentConsultations")
   communicationLogs CommunicationLog[] @relation("AgentCommunications")
+  rateHistories      CommissionRateHistory[] @relation("AgentRateHistory")
+  rateChangesMade    CommissionRateHistory[] @relation("RateChangesMade")
 
   @@map("users")
 }
@@ -82,6 +84,7 @@ model Lead {
 
   assignedToId     String?
   assignedTo       User?    @relation("AgentLeads", fields: [assignedToId], references: [id])
+  assignedAt       DateTime?
   
   clientId         String?  @unique
   client           Client?  @relation(fields: [clientId], references: [id])
@@ -133,6 +136,7 @@ model Client {
 
   assignedToId     String?
   assignedTo       User?    @relation("AgentClients", fields: [assignedToId], references: [id])
+  assignedAt       DateTime?
 
   lead             Lead?
   documents        Document[]
@@ -168,6 +172,7 @@ model Consultation {
 
   consultantId     String?
   consultant       User?    @relation("AgentConsultations", fields: [consultantId], references: [id])
+  assignedAt       DateTime?
 
   @@map("consultations")
 }
@@ -208,6 +213,7 @@ model Payment {
   amount           Float
   discount         Float    @default(0)
   totalPaid        Float    @default(0)
+  commissionRate   Float?   @default(0)
   status           String   @default("Pending") // Pending, Paid, Refund Under Review, Refunded
   paymentMethod    String?
   transactionId    String?
@@ -444,5 +450,19 @@ model BlacklistedClient {
   createdAt        DateTime @default(now())
 
   @@map("blacklisted_clients")
+}
+
+model CommissionRateHistory {
+  id              String   @id @default(uuid())
+  agentId         String
+  agent           User     @relation("AgentRateHistory", fields: [agentId], references: [id])
+  oldRate         Float
+  newRate         Float
+  changedById     String
+  changedBy       User     @relation("RateChangesMade", fields: [changedById], references: [id])
+  revenueAtChange Float    @default(0)
+  createdAt       DateTime @default(now())
+
+  @@map("commission_rate_histories")
 }
 

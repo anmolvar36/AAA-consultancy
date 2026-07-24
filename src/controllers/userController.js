@@ -148,6 +148,10 @@ const resetUserPassword = async (req, res) => {
     });
     res.json({ message: 'Password updated' });
   } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
 const updateSuperAdminProfile = async (req, res) => {
   try {
     if (!req.user || req.user.role !== 'super_admin') {

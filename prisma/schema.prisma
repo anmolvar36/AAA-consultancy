@@ -39,6 +39,8 @@ model User {
   assignedClients  Client[] @relation("AgentClients")
   consultations    Consultation[] @relation("AgentConsultations")
   communicationLogs CommunicationLog[] @relation("AgentCommunications")
+  rateHistories      CommissionRateHistory[] @relation("AgentRateHistory")
+  rateChangesMade    CommissionRateHistory[] @relation("RateChangesMade")
 
   @@map("users")
 }
@@ -208,6 +210,7 @@ model Payment {
   amount           Float
   discount         Float    @default(0)
   totalPaid        Float    @default(0)
+  commissionRate   Float?   @default(0)
   status           String   @default("Pending") // Pending, Paid, Refund Under Review, Refunded
   paymentMethod    String?
   transactionId    String?
@@ -444,5 +447,19 @@ model BlacklistedClient {
   createdAt        DateTime @default(now())
 
   @@map("blacklisted_clients")
+}
+
+model CommissionRateHistory {
+  id              String   @id @default(uuid())
+  agentId         String
+  agent           User     @relation("AgentRateHistory", fields: [agentId], references: [id])
+  oldRate         Float
+  newRate         Float
+  changedById     String
+  changedBy       User     @relation("RateChangesMade", fields: [changedById], references: [id])
+  revenueAtChange Float    @default(0)
+  createdAt       DateTime @default(now())
+
+  @@map("commission_rate_histories")
 }
 

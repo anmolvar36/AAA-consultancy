@@ -17,6 +17,7 @@ const getActiveCases = async (req, res) => {
     
     const mapped = activeCases.map(c => ({
       ...c,
+      onboardingDate: c.createdAt,
       name: `${c.firstName} ${c.lastName}`,
       assignedConsultantName: c.assignedTo?.fullName
     }));
@@ -44,6 +45,7 @@ const getClosedCases = async (req, res) => {
     
     const mapped = closedCases.map(c => ({
       ...c,
+      onboardingDate: c.createdAt,
       name: `${c.firstName} ${c.lastName}`,
       assignedConsultantName: c.assignedTo?.fullName
     }));

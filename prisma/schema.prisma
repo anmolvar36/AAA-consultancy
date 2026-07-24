@@ -358,13 +358,19 @@ model CommunicationLog {
 
 model AuditLog {
   id               String   @id @default(uuid())
-  applicationId    String
-  applicationCycle ApplicationCycle @relation(fields: [applicationId], references: [id])
-  actorId          String   // System, User UUID, or Webhook ID
-  action           String   // e.g., STATUS_CHANGED, DOC_UPLOADED
+  leadId           String?
+  clientId         String?
+  documentId       String?
+  applicationId    String?
+  applicationCycle ApplicationCycle? @relation(fields: [applicationId], references: [id])
+  actorId          String?  // System, User UUID, Client ID, or Webhook ID
+  actorName        String?  // e.g., MADI SIR, Kia Car
+  actorRole        String?  // super_admin, admin, consultant, client, system
+  action           String   // e.g., STATUS_CHANGED, DOC_UPLOADED, DOC_VERIFIED, DOC_REJECTED, NOTE_ADDED
+  description      String?  @db.Text
   previousState    Json?
-  newState         Json
-  createdAt        DateTime @default(now()) // Immutable (No updateAt)
+  newState         Json?
+  createdAt        DateTime @default(now()) // Immutable (No updatedAt)
 
   @@map("audit_logs")
 }

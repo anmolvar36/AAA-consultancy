@@ -62,9 +62,13 @@ const generatePaymentLink = async (req, res) => {
             quantity: 1
           }],
           mode: 'payment',
-          success_url: `${frontendUrl}/#/portal/login?payment=success&id=${payment.id}`,
+          success_url: `${frontendUrl}/#/portal/login?payment=success&id=${payment.id}&session_id={CHECKOUT_SESSION_ID}`,
           cancel_url: `${frontendUrl}/#/portal/documents/${clientId}?cancelled=true`,
-          client_reference_id: payment.id
+          client_reference_id: payment.id,
+          metadata: {
+            paymentId: payment.id,
+            clientId
+          }
         });
 
         if (session && session.url) {

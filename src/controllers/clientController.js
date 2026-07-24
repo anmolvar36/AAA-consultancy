@@ -23,19 +23,26 @@ const getClients = async (req, res) => {
       });
     }
     
-    const mapped = clients.map(c => ({
-      ...c,
-      onboardingDate: c.createdAt,
-      assignedAt: c.assignedAt || c.createdAt,
-      name: `${c.firstName} ${c.lastName}`,
-      serviceId: c.serviceType,
-      assignedConsultantName: c.assignedTo?.fullName,
-      assignedConsultantId: c.assignedToId,
-      hasCredentials: !!c.password,
-      clientCode: c.clientCode || null,
-      comments: Array.isArray(c.caseComments) ? c.caseComments : [],
-      applicationCycles: c.applicationCycles || []
-    }));
+    const totalClientsCount = clients.length;
+    const mapped = clients.map((c, index) => {
+      const autoCode = `CID ${12000 + (totalClientsCount - index)}`;
+      const finalClientCode = c.clientCode || autoCode;
+      
+      return {
+        ...c,
+        onboardingDate: c.createdAt,
+        assignedAt: c.assignedAt || c.createdAt,
+        name: `${c.firstName} ${c.lastName}`,
+        serviceId: c.serviceType,
+        assignedConsultantName: c.assignedTo?.fullName,
+        assignedConsultantId: c.assignedToId,
+        hasCredentials: !!c.password,
+        clientCode: finalClientCode,
+        displayId: finalClientCode,
+        comments: Array.isArray(c.caseComments) ? c.caseComments : [],
+        applicationCycles: c.applicationCycles || []
+      };
+    });
     
     res.json(mapped);
   } catch (error) {

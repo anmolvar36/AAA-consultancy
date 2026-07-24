@@ -259,6 +259,11 @@ const getLeadById = async (req, res) => {
     if (!lead) {
       return res.status(404).json({ message: 'Lead not found' });
     }
+
+    if (lead.assignedToId) {
+      await syncLeadConsultation(lead.id).catch(err => console.error('[getLeadById] Sync Error:', err.message));
+    }
+
     const mapped = {
       ...lead,
       name: `${lead.firstName} ${lead.lastName}`,
@@ -433,7 +438,7 @@ async function syncLeadConsultation(leadId) {
     const lead = await prisma.lead.findUnique({
       where: { id: leadId }
     });
-    if (!lead || !lead.assignedToId || !lead.meetingPreferredDate) {
+    if (!lead || !lead.assignedToId) {
       return;
     }
 
@@ -445,15 +450,16 @@ async function syncLeadConsultation(leadId) {
       where: { leadId: lead.id }
     });
 
-    // Consultation always starts as 'Pending Acceptance'
-    // Zoom meeting is created ONLY when agent accepts — NOT at form submit time
     const consultationStatus = 'Pending Acceptance';
+    const fallbackDate = lead.formSubmittedAt ? new Date(lead.formSubmittedAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
+    const meetingDate = lead.meetingPreferredDate || fallbackDate;
+    const meetingTime = lead.meetingPreferredTime || 'TBD / Flexible';
 
     if (!consultation) {
       consultation = await prisma.consultation.create({
         data: {
-          date: lead.meetingPreferredDate,
-          timeSlot: lead.meetingPreferredTime || 'TBD',
+          date: meetingDate,
+          timeSlot: meetingTime,
           durationMinutes: Number(duration),
           status: consultationStatus,
           leadId: lead.id,
@@ -468,8 +474,8 @@ async function syncLeadConsultation(leadId) {
       consultation = await prisma.consultation.update({
         where: { id: consultation.id },
         data: {
-          date: lead.meetingPreferredDate,
-          timeSlot: lead.meetingPreferredTime || 'TBD',
+          date: meetingDate,
+          timeSlot: meetingTime,
           consultantId: lead.assignedToId,
           internalNotes: lead.meetingNotes || consultation.internalNotes || ''
         }

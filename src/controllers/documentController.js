@@ -73,7 +73,12 @@ const uploadDocument = async (req, res) => {
         const fs = require('fs');
         const { extractText } = require('unpdf');
         const dataBuffer = fs.readFileSync(req.file.path);
-        const pdfData = await extractText(new Uint8Array(dataBuffer));
+        const extractPromise = extractText(new Uint8Array(dataBuffer));
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('PDF text extraction timed out (5s limit)')), 5000)
+        );
+        const pdfData = await Promise.race([extractPromise, timeoutPromise]);
+        
         const text = Array.isArray(pdfData.text) ? pdfData.text.join(' ') : (pdfData.text || '');
         if (text) {
           const words = text.trim().split(/\s+/).filter(w => w.length > 0);
@@ -121,22 +126,21 @@ const uploadDocument = async (req, res) => {
       if (req.body.uploadedByRole === 'agent' || category === 'Official Sworn Output' || belongsTo === 'Staff Upload') {
         if (client.email) {
           const { sendEmail } = require('../services/emailService');
-          try {
-            await sendEmail({
-              to: client.email,
-              subject: `[COMPLETED] Your Official Sworn Translation is Ready! 📜`,
-              html: `
-                <h3>Hello ${clientName},</h3>
-                <p>Great news! Your official Spanish Sworn Translation document <b>${req.file.originalname}</b> has been completed and uploaded by our operations team.</p>
-                <p>It is now available for direct download on your <b>Client Portal</b> under your documents section.</p>
-                <br/>
-                <p>Best regards,<br/><b>AAA Immigration Services LLC</b></p>
-              `
-            });
+          sendEmail({
+            to: client.email,
+            subject: `[COMPLETED] Your Official Sworn Translation is Ready! 📜`,
+            html: `
+              <h3>Hello ${clientName},</h3>
+              <p>Great news! Your official Spanish Sworn Translation document <b>${req.file.originalname}</b> has been completed and uploaded by our operations team.</p>
+              <p>It is now available for direct download on your <b>Client Portal</b> under your documents section.</p>
+              <br/>
+              <p>Best regards,<br/><b>AAA Immigration Services LLC</b></p>
+            `
+          }).then(() => {
             console.log(`[Sworn Delivery] Client notification email sent to ${client.email}`);
-          } catch (e) {
+          }).catch((e) => {
             console.error('Failed to notify client via email:', e.message);
-          }
+          });
         }
       }
       
@@ -284,22 +288,20 @@ const uploadTranslatedDocument = async (req, res) => {
     // 2. Trigger email to client notifying them that translation is ready
     if (document.client && document.client.email) {
       const { sendEmail } = require('../services/emailService');
-      try {
-        await sendEmail({
-          to: document.client.email,
-          subject: 'Your Certified Sworn Translation is Ready! 🇪🇸',
-          html: `
-            <h3>Dear ${document.client.firstName},</h3>
-            <p>We are pleased to inform you that the sworn translation of your document (<b>${document.name}</b>) is complete and ready.</p>
-            <p>You can now download the certified PDF directly from your Client Portal dashboard.</p>
-            <p><a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/portal/login">Log in to Client Portal</a></p>
-            <br/>
-            <p>Best regards,<br/>AAA Business Consultancy Team</p>
-          `
-        });
-      } catch (emailErr) {
+      sendEmail({
+        to: document.client.email,
+        subject: 'Your Certified Sworn Translation is Ready! 🇪🇸',
+        html: `
+          <h3>Dear ${document.client.firstName},</h3>
+          <p>We are pleased to inform you that the sworn translation of your document (<b>${document.name}</b>) is complete and ready.</p>
+          <p>You can now download the certified PDF directly from your Client Portal dashboard.</p>
+          <p><a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/portal/login">Log in to Client Portal</a></p>
+          <br/>
+          <p>Best regards,<br/>AAA Business Consultancy Team</p>
+        `
+      }).catch((emailErr) => {
         console.error('Failed to send email notification:', emailErr);
-      }
+      });
     }
 
     res.json({ success: true, document });

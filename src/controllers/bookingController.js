@@ -557,8 +557,15 @@ exports.uploadTranslationDocument = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Only PDF files are supported' });
     }
 
-    // Parse PDF using unpdf extractText
-    const pdfData = await extractText(new Uint8Array(req.file.buffer));
+    // Parse PDF using unpdf extractText with a 5-second timeout protection
+    const extractPromise = extractText(new Uint8Array(req.file.buffer));
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('PDF text extraction timed out (5s limit)')), 5000)
+    );
+    const pdfData = await Promise.race([extractPromise, timeoutPromise]).catch(err => {
+      console.warn('[PDF Parse Sworn Translation] Text extraction failed or timed out:', err.message);
+      return { text: '' };
+    });
     const text = Array.isArray(pdfData.text) ? pdfData.text.join(' ') : (pdfData.text || '');
 
     // Count words (naive whitespace split)

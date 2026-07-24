@@ -281,12 +281,18 @@ const getRefundRequests = async (req, res) => {
 
 const createRefundRequest = async (req, res) => {
   try {
-    const { clientId, category, reason, amount, proofUrl, bankAccountName, bankIban, bankSwift } = req.body;
+    const { clientId: bodyClientId, category, reason, amount, proofUrl, bankAccountName, bankIban, bankSwift } = req.body;
+    const targetClientId = bodyClientId || req.user?.id;
+
+    if (!targetClientId) {
+      return res.status(400).json({ message: 'Client ID is required' });
+    }
+
     let refundAmount = Number(amount) || 0;
     
-    if (category === 'Visa Rejection' || category.includes('Visa Rejection')) {
+    if (category === 'Visa Rejection' || (category && category.includes('Visa Rejection'))) {
       const payments = await prisma.payment.findMany({
-        where: { clientId, status: 'Paid' }
+        where: { clientId: targetClientId, status: 'Paid' }
       });
       const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
       refundAmount = totalPaid * 0.5; // Auto 50% refund
@@ -294,7 +300,7 @@ const createRefundRequest = async (req, res) => {
     
     const refund = await prisma.refundRequest.create({
       data: {
-        clientId,
+        clientId: targetClientId,
         category,
         reason,
         amount: refundAmount,
@@ -305,6 +311,23 @@ const createRefundRequest = async (req, res) => {
         status: 'Pending Review'
       }
     });
+
+    try {
+      const creatorName = req.user?.fullName || req.user?.email || 'Client Self-Service';
+      const creatorRole = req.user?.role || 'client';
+      const targetClient = await prisma.client.findUnique({ where: { id: targetClientId } });
+      const clientName = targetClient ? `${targetClient.firstName} ${targetClient.lastName}` : 'Client';
+      
+      await prisma.auditLog.create({
+        data: {
+          action: `Refund Request Created by ${creatorRole.toUpperCase()} (${creatorName})`,
+          performedBy: creatorName,
+          details: `Refund Request #${refund.id.substring(0, 8)} created for ${clientName}. Category: ${category}, Amount: €${refundAmount}. Raised by: ${creatorName} (${creatorRole}).`
+        }
+      });
+    } catch (auditErr) {
+      console.error('Failed to log refund creation audit:', auditErr.message);
+    }
     
     res.status(201).json(refund);
   } catch (error) {

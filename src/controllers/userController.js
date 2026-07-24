@@ -69,6 +69,8 @@ const createUser = async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
+    const rateNum = Number(commissionRate) || 0;
+
     const user = await prisma.user.create({
       data: {
         fullName,
@@ -78,12 +80,35 @@ const createUser = async (req, res) => {
         role: role || 'consultant',
         spokenLanguages,
         nationalities,
-        commissionRate: Number(commissionRate) || 0,
+        commissionRate: rateNum,
         immigrationBio,
         customPermissions,
         createdById: req.user ? req.user.id : null
       }
     });
+
+    // Create Initial Rate History Entry at Registration
+    try {
+      let changedById = req.user?.id;
+      if (changedById) {
+        const adminUser = await prisma.user.findUnique({ where: { id: changedById }, select: { id: true } });
+        if (!adminUser) changedById = user.id;
+      } else {
+        changedById = user.id;
+      }
+
+      await prisma.commissionRateHistory.create({
+        data: {
+          agentId: user.id,
+          oldRate: 0,
+          newRate: rateNum,
+          changedById: changedById,
+          revenueAtChange: 0
+        }
+      });
+    } catch (hErr) {
+      console.error('Error logging initial commission rate history:', hErr);
+    }
 
     res.status(201).json({
       id: user.id,

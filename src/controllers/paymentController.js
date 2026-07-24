@@ -892,9 +892,116 @@ const getCommissionHistory = async (req, res) => {
       orderBy: { createdAt: 'desc' }
     });
     res.json(history);
+const getRefundRequests = async (req, res) => {
+  try {
+    const refundPayments = await prisma.payment.findMany({
+      where: {
+        OR: [
+          { refundEligibility: true },
+          { refundStatus: { notIn: ['None', null] } },
+          { status: { in: ['Refund Under Review', 'Refunded'] } }
+        ]
+      },
+      include: {
+        client: { select: { firstName: true, lastName: true, email: true, phone: true } }
+      },
+      orderBy: { updatedAt: 'desc' }
+    });
+
+    const mapped = refundPayments.map(p => ({
+      ...p,
+      clientName: p.client ? `${p.client.firstName} ${p.client.lastName}` : 'Unknown',
+      clientEmail: p.client?.email,
+      clientPhone: p.client?.phone,
+      calculatedRefundAmount: p.refundAmount || Number(((p.totalPaid || p.amount || 0) * 0.50).toFixed(2))
+    }));
+
+    res.json(mapped);
   } catch (error) {
-    console.error('Error fetching commission rate history:', error);
-    res.status(500).json({ message: 'Server error fetching commission history' });
+    console.error('Error fetching refund requests:', error);
+    res.status(500).json({ message: 'Server error fetching refund requests' });
+  }
+};
+
+const createRefundRequest = async (req, res) => {
+  try {
+    const { paymentId, clientId, reason } = req.body;
+    const actorName = req.user ? (req.user.fullName || req.user.email) : 'Staff';
+
+    let payment = await prisma.payment.findFirst({
+      where: paymentId ? { id: paymentId } : { clientId }
+    });
+
+    if (!payment) {
+      return res.status(404).json({ message: 'Payment record not found for refund request' });
+    }
+
+    const calculatedRefund = Number(((payment.totalPaid || payment.amount || 0) * 0.50).toFixed(2));
+
+    payment = await prisma.payment.update({
+      where: { id: payment.id },
+      data: {
+        refundStatus: 'Refund Under Review',
+        refundEligibility: true,
+        refundAmount: calculatedRefund,
+        refundReason: reason || 'Refund requested under 50% Guarantee Policy',
+        status: 'Refund Under Review'
+      }
+    });
+
+    const { logActivity } = require('../services/auditService');
+    logActivity({
+      clientId: payment.clientId,
+      actorId: req.user?.id || 'staff',
+      actorName,
+      actorRole: req.user?.role || 'staff',
+      action: 'REFUND_REQUESTED',
+      description: `Refund claim submitted for review by ${actorName}. Calculated 50% Guarantee Amount: €${calculatedRefund}. Reason: "${reason || 'None'}"`
+    });
+
+    res.json(payment);
+  } catch (error) {
+    console.error('Error creating refund request:', error);
+    res.status(500).json({ message: 'Server error creating refund request' });
+  }
+};
+
+const updateRefundStatus = async (req, res) => {
+  try {
+    const targetPaymentId = req.params.id || req.body.paymentId;
+    const { refundStatus, rejectionReason } = req.body;
+    const actorName = req.user ? (req.user.fullName || req.user.email) : 'Finance Officer';
+
+    let mainPaymentStatus = undefined;
+    if (refundStatus === 'Refund Approved') mainPaymentStatus = 'Refund Under Review';
+    if (refundStatus === 'Refund Completed') mainPaymentStatus = 'Refunded';
+    if (refundStatus === 'Refund Rejected') mainPaymentStatus = 'Paid';
+
+    const payment = await prisma.payment.update({
+      where: { id: targetPaymentId },
+      data: {
+        refundStatus,
+        status: mainPaymentStatus || undefined,
+        refundRejectionReason: refundStatus === 'Refund Rejected' ? rejectionReason : undefined,
+        refundProcessedAt: refundStatus === 'Refund Completed' ? new Date() : undefined,
+        refundProcessedBy: actorName
+      }
+    });
+
+    const { logActivity } = require('../services/auditService');
+    logActivity({
+      clientId: payment.clientId,
+      actorId: req.user?.id || 'staff',
+      actorName,
+      actorRole: req.user?.role || 'staff',
+      action: refundStatus === 'Refund Completed' ? 'REFUND_COMPLETED' : refundStatus === 'Refund Rejected' ? 'REFUND_REJECTED' : 'REFUND_STATUS_UPDATED',
+      description: `Refund status updated to "${refundStatus}" by ${actorName}.${rejectionReason ? ` Rejection Reason: "${rejectionReason}"` : ''}`
+    });
+
+    res.json(payment);
+  } catch (error) {
+    console.error('Error updating refund status:', error);
+    res.status(500).json({ message: 'Server error updating refund status' });
   }
 };
 

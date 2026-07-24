@@ -187,9 +187,13 @@ model ApplicationCycle {
   originalSubmissionDate DateTime?
   refusalDate      DateTime?
   refusalReason    String?  @db.Text
+  changesMade      String?  @db.Text
   resubmissionDate DateTime?
   lawyerAssigned   String?
+  appealSubmissionDate DateTime?
   appealDeadline   DateTime?
+  governmentDecision String? @db.Text
+  governmentDecisionDate DateTime?
   status           String   @default("Resubmission in Progress")
   serviceType      String?
   type             String?  @default("resubmission") // resubmission, appeal
@@ -217,6 +221,13 @@ model Payment {
   totalPaid        Float    @default(0)
   commissionRate   Float?   @default(0)
   status           String   @default("Pending") // Pending, Paid, Refund Under Review, Refunded
+  refundStatus     String?  @default("None") // None, Refund Eligible, Refund Under Review, Refund Approved, Refund Completed, Refund Rejected
+  refundEligibility Boolean @default(false)
+  refundAmount     Float?   @default(0)
+  refundReason     String?  @db.Text
+  refundRejectionReason String? @db.Text
+  refundProcessedAt DateTime?
+  refundProcessedBy String?
   paymentMethod    String?
   transactionId    String?
   gatewayId        String?

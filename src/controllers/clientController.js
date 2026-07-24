@@ -27,7 +27,8 @@ const getClients = async (req, res) => {
     
     res.json(mapped);
   } catch (error) {
-    res.status(500).json({ message: 'Server error fetching clients' });
+    console.error('Error fetching clients:', error);
+    res.status(500).json({ message: 'Server error fetching clients', error: error.message });
   }
 };
 

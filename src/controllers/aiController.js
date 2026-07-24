@@ -320,12 +320,23 @@ exports.getCeoBrief = async (req, res) => {
     // Start of month
     const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 
+    // Dynamic CRM Overall Counts
+    const totalClientsCount = await prisma.client.count().catch(() => 0);
+    const todayClientsCount = await prisma.client.count({
+      where: { createdAt: { gte: startOfToday, lte: endOfToday } }
+    }).catch(() => 0);
+    const totalAgentsCount = await prisma.user.count({
+      where: { role: { in: ['agent', 'consultant', 'admin'] } }
+    }).catch(() => 0);
+    const totalLeadsCount = await prisma.lead.count().catch(() => 0);
+    const totalConsultationsCount = await prisma.consultation.count().catch(() => 0);
+
     // 1. Number of new leads received today
     const newLeadsToday = await prisma.lead.count({
       where: {
         createdAt: { gte: startOfToday, lte: endOfToday }
       }
-    });
+    }).catch(() => 0);
 
     // 2. Number of active clients
     const activeClients = await prisma.client.count({
@@ -640,25 +651,20 @@ exports.getCeoBrief = async (req, res) => {
         const prompt = `You are the AI CEO Assistant for Wael Madi, CEO of AAA Business Consultancy LLC (Spanish Immigration & Sworn Translation Services).
 Generate a professional, motivating, and detailed daily morning briefing in the tone of "Good morning, Wael."
 Base it on the following live CRM metrics:
-- New leads received today/overnight: ${newLeadsToday}
-- Active clients: ${activeClients}
-- Pending consultations: ${pendingConsultations}
-- Today's meetings/info sessions: ${bookedSessionsToday}
+- Total registered clients: ${totalClientsCount} (New today: ${todayClientsCount})
+- Active agents & consultants on staff: ${totalAgentsCount}
+- Active clients in processing: ${activeClients}
+- Total leads in database: ${totalLeadsCount} (New today: ${newLeadsToday})
+- Total consultations logged: ${totalConsultationsCount} (Scheduled for today: ${bookedSessionsToday}, Pending: ${pendingConsultations})
 - Outstanding payments waiting: ${outstandingPaymentsCount} (Total amount: €${outstandingPaymentsAmount})
 - Professional Case Assessments awaiting doc review: ${assessmentsAwaitingReview}
 - Full Processing cases awaiting action: ${fullProcessingCasesAwaitingAction}
-- No-show customers: ${noShowCustomers}
-- Customers requiring follow-up: ${customersRequiringFollowUp}
 - Customers ready for payment: ${customersReadyForPayment}
 - Customers waiting for document submission: ${customersWaitingForDocs}
 - Customers waiting for appointment booking: ${customersWaitingForAppointment}
 - Customers waiting for application submission: ${customersWaitingForSubmission}
 - Customers waiting for government updates: ${customersWaitingForGov}
-- Customers requiring resubmission: ${customersRequiringResubmission}
-- Urgent or unread notifications/tasks: ${urgentOverdueTasks}
-- WhatsApp inbox items: ${whatsappConversations}
-- Social inbox items: ${socialInquiries}
-- New customer reviews and feedback alerts: ${feedbackCount}
+- Urgent tasks: ${urgentOverdueTasks}
 - Financial summary: Today Paid: €${financeSummary.today}, Weekly: €${financeSummary.weekly}, Monthly: €${financeSummary.monthly}
 
 Output formatting:
@@ -690,27 +696,23 @@ Output formatting:
       }
     }
 
-    // Heuristic Fallback Engine (Runs if API fails or Key is missing)
+    // Dynamic Fallback Engine (Runs if API fails or Key is missing)
     if (!aiSummary || !aiSuggestions.length) {
       aiSummary = `Good morning, Wael.
-Here's your business summary for today:
-• **${newLeadsToday} new leads** were received overnight.
-• **${bookedSessionsToday} customers** booked the Free Spain Visa & Residency Information Session.
-• **${customersReadyForPayment} customers** are waiting to complete their €250 Professional Case Assessment payments (Outstanding: **€${outstandingPaymentsAmount}**).
-• **${assessmentsAwaitingReview} Professional Case Assessments** are ready for document review.
-• **${customersWaitingForSubmission} visa applications** are complete and ready for submission.
-• **${missedWebinarFollowUps} customers** missed yesterday's webinar and require follow-up.
-• Today's webinar session is scheduled in the calendar.
-• Marketing campaigns generated **${newLeadsToday} inquiries** within the last 24 hours.
-• WhatsApp generated **${whatsappConversations} inbound conversations** requiring operator attention.
-• Financial progress: Today **€${financeSummary.today}** paid, Monthly total is **€${financeSummary.monthly}**.
-• Customer feedback: **${feedbackCount} customer reviews and feedback** items require your review.`;
+Here's your live executive business summary for today:
+• **Clients Overview:** **${totalClientsCount} total registered clients** (**${todayClientsCount} new today**).
+• **Active Cases:** **${activeClients} cases** currently in progress across processing stages.
+• **Team Operations:** **${totalAgentsCount} active agents & consultants** handling client operations.
+• **Consultations:** **${bookedSessionsToday} meetings scheduled for today** (**${totalConsultationsCount} total** logged).
+• **Lead Pipeline:** **${newLeadsToday} new leads** received today (**${totalLeadsCount} total** in CRM).
+• **Financial Summary:** Today **€${financeSummary.today}** paid, Monthly total is **€${financeSummary.monthly}** (**€${outstandingPaymentsAmount}** pending across ${customersReadyForPayment} clients).
+• **Document Reviews:** **${assessmentsAwaitingReview} case assessments** awaiting document verification.`;
 
       aiSuggestions = [
-        `Follow up with the ${customersReadyForPayment} customers waiting for payment to confirm setup or trigger the 10% CEO discount reminder.`,
-        `Direct operations team to review the ${assessmentsAwaitingReview} case assessments currently pending document verification.`,
-        `Address the ${whatsappConversations} unread WhatsApp threads requiring consultant responses to preserve conversion rate.`,
-        `Assign the ${newLeadsToday} new incoming leads to agents based on spoken language expertise.`,
+        `Follow up with the ${customersReadyForPayment || 0} customers waiting for payment to confirm setup or trigger reminders.`,
+        `Direct the ${totalAgentsCount} team members to review the ${assessmentsAwaitingReview} case assessments currently pending verification.`,
+        `Review today's ${bookedSessionsToday} scheduled consultations and assign pending unassigned sessions.`,
+        `Assign the ${newLeadsToday} new incoming leads to active agents based on workload.`,
         `Check appeal deadlines for application cycles requiring resubmissions (${customersRequiringResubmission} pending).`
       ];
     }

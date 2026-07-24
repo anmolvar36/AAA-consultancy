@@ -20,7 +20,7 @@ const getConsultations = async (req, res) => {
     const consultations = await prisma.consultation.findMany({
       where: whereClause,
       include: {
-        lead: { select: { firstName: true, lastName: true, email: true, clientId: true, languages: true } },
+        lead: { select: { firstName: true, lastName: true, email: true, clientId: true, preferredLanguage: true } },
         consultant: { select: { fullName: true } }
       },
       orderBy: { createdAt: 'desc' }
@@ -41,7 +41,7 @@ const getConsultations = async (req, res) => {
         meetingTime: c.timeSlot,
         assignedAt: c.assignedAt || c.createdAt,
         clientName: c.lead ? `${c.lead.firstName} ${c.lead.lastName}` : 'Unknown',
-        clientLanguage: Array.isArray(c.lead?.languages) ? c.lead.languages.join(', ') : (c.lead?.languages || 'N/A'),
+        clientLanguage: c.lead?.preferredLanguage || 'N/A',
         agentName: c.consultant?.fullName || 'Unassigned',
         assignedConsultantName: c.consultant?.fullName || 'Unassigned',
         assignedConsultantId: c.consultantId

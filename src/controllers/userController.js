@@ -109,30 +109,49 @@ const updateUser = async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    const newRateNum = commissionRate !== undefined ? Number(commissionRate) : existingUser.commissionRate;
-    if (commissionRate !== undefined && existingUser.commissionRate !== newRateNum) {
-      // Calculate current revenue for this agent
-      const agentClients = await prisma.client.findMany({
-        where: { assignedToId: id },
-        select: { id: true }
-      });
-      const clientIds = agentClients.map(c => c.id);
-      const paidPayments = await prisma.payment.findMany({
-        where: { clientId: { in: clientIds }, status: 'Paid' },
-        select: { amount: true }
-      });
-      const totalRevenue = paidPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
+    const oldRate = Number(existingUser.commissionRate) || 0;
+    const newRateNum = (commissionRate !== undefined && commissionRate !== null && !isNaN(Number(commissionRate)))
+      ? Number(commissionRate)
+      : oldRate;
 
-      // Create Rate History Log
-      await prisma.commissionRateHistory.create({
-        data: {
-          agentId: id,
-          oldRate: existingUser.commissionRate || 0,
-          newRate: newRateNum,
-          changedById: req.user ? req.user.id : id,
-          revenueAtChange: totalRevenue
+    if (oldRate !== newRateNum) {
+      try {
+        // Calculate current revenue for this agent
+        const agentClients = await prisma.client.findMany({
+          where: { assignedToId: id },
+          select: { id: true }
+        });
+        const clientIds = agentClients.map(c => c.id);
+        const paidPayments = await prisma.payment.findMany({
+          where: { clientId: { in: clientIds }, status: 'Paid' },
+          select: { amount: true }
+        });
+        const totalRevenue = paidPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
+
+        // Determine valid changedById
+        let changedById = req.user?.id;
+        if (changedById) {
+          const adminUser = await prisma.user.findUnique({ where: { id: changedById }, select: { id: true } });
+          if (!adminUser) {
+            changedById = id;
+          }
+        } else {
+          changedById = id;
         }
-      });
+
+        // Create Rate History Log
+        await prisma.commissionRateHistory.create({
+          data: {
+            agentId: id,
+            oldRate: oldRate,
+            newRate: newRateNum,
+            changedById: changedById,
+            revenueAtChange: totalRevenue
+          }
+        });
+      } catch (historyErr) {
+        console.error('Error logging commission rate history:', historyErr);
+      }
     }
 
     const user = await prisma.user.update({
@@ -152,7 +171,7 @@ const updateUser = async (req, res) => {
     res.json(user);
   } catch (error) {
     console.error('Error updating user:', error);
-    res.status(500).json({ message: 'Server error' });
+    res.status(500).json({ message: error.message || 'Server error' });
   }
 };
 

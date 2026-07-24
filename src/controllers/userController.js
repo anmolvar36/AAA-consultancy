@@ -148,8 +148,38 @@ const resetUserPassword = async (req, res) => {
     });
     res.json({ message: 'Password updated' });
   } catch (error) {
-    res.status(500).json({ message: 'Server error' });
+const updateSuperAdminProfile = async (req, res) => {
+  try {
+    if (!req.user || req.user.role !== 'super_admin') {
+      return res.status(403).json({ message: 'Access denied. Only Super Admin can change Super Admin details.' });
+    }
+
+    const { fullName, email, hotlineNumber } = req.body;
+    if (!fullName || !fullName.trim()) {
+      return res.status(400).json({ message: 'Super Admin full name is required.' });
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: req.user.id },
+      data: {
+        fullName: fullName.trim(),
+        ...(email ? { email: email.toLowerCase().trim() } : {}),
+        ...(hotlineNumber ? { hotlineNumber: hotlineNumber.trim() } : {})
+      }
+    });
+
+    res.json({
+      id: updatedUser.id,
+      fullName: updatedUser.fullName,
+      email: updatedUser.email,
+      role: updatedUser.role,
+      name: updatedUser.fullName,
+      hotlineNumber: updatedUser.hotlineNumber
+    });
+  } catch (error) {
+    console.error('Error updating Super Admin profile:', error);
+    res.status(500).json({ message: 'Server error updating Super Admin profile', error: error.message });
   }
 };
 
-module.exports = { getAgents, createUser, updateUser, deleteUser, resetUserPassword };
+module.exports = { getAgents, createUser, updateUser, deleteUser, resetUserPassword, updateSuperAdminProfile };

@@ -40,7 +40,9 @@ const getConsultations = async (req, res) => {
         meetingDate: c.date,
         meetingTime: c.timeSlot,
         clientName: c.lead ? `${c.lead.firstName} ${c.lead.lastName}` : 'Unknown',
-        agentName: c.consultant?.fullName || 'Unassigned'
+        agentName: c.consultant?.fullName || 'Unassigned',
+        assignedConsultantName: c.consultant?.fullName || 'Unassigned',
+        assignedConsultantId: c.consultantId
       };
     });
     

@@ -42,13 +42,22 @@ const processPaymentEvent = async (event) => {
 
         const totalPaid = session.amount_total ? session.amount_total / 100 : payment.amount;
 
+        const clientWithAgent = await tx.client.findUnique({
+          where: { id: payment.clientId },
+          include: { assignedTo: true }
+        });
+        const snapshotRate = (clientWithAgent && clientWithAgent.assignedTo) 
+          ? (clientWithAgent.assignedTo.commissionRate || 0) 
+          : 0;
+
         await tx.payment.update({
           where: { id: paymentId },
           data: {
             status: 'Paid',
             transactionId: transactionId,
             paymentMethod: 'Stripe',
-            totalPaid: totalPaid
+            totalPaid: totalPaid,
+            commissionRate: snapshotRate
           }
         });
 

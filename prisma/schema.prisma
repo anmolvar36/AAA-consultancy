@@ -93,6 +93,7 @@ model Lead {
 
 model Client {
   id               String   @id @default(uuid())
+  clientCode       String?  @unique // Human-readable ID: "CID 12002"
   firstName        String
   lastName         String
   email            String   @unique
@@ -111,6 +112,7 @@ model Client {
   documentUploadAllowed Boolean @default(false)
   profileSummary   String?  @db.Text
   dependentsDetails Json?
+  caseComments     Json?    // Array of { text, author, authorId, date, time }
   
   sourceLanguage    String?
   targetLanguage    String?

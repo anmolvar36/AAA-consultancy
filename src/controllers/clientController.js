@@ -18,7 +18,9 @@ const getClients = async (req, res) => {
       serviceId: c.serviceType,
       assignedConsultantName: c.assignedTo?.fullName,
       assignedConsultantId: c.assignedToId,
-      hasCredentials: !!c.password
+      hasCredentials: !!c.password,
+      clientCode: c.clientCode || null,
+      comments: Array.isArray(c.caseComments) ? c.caseComments : []
     }));
     
     res.json(mapped);
@@ -109,6 +111,10 @@ const createClient = async (req, res) => {
       const hashedPassword = await bcrypt.hash(plainPassword, salt);
       credentialsGenerated = true;
 
+      // Auto-generate human-readable clientCode: CID 12002, 12003...
+      const clientCount = await prisma.client.count();
+      const clientCode = `CID ${12001 + clientCount}`;
+
       client = await prisma.client.create({
         data: {
           firstName,
@@ -116,6 +122,7 @@ const createClient = async (req, res) => {
           email,
           phone,
           nationality,
+          clientCode,
           serviceType: serviceType || serviceId,
           assignedToId: finalAssignedTo,
           packageId,
@@ -590,9 +597,77 @@ const submitGoogleReviewStatus = async (req, res) => {
   }
 };
 
+/**
+ * General-purpose client update — handles case comments, handler assignment, etc.
+ * Deliberately does NOT allow password or sensitive credential changes.
+ */
+const updateClient = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      assignedHandlerId,
+      assignedHandlerName,
+      assignedToId,
+      assignedConsultantId,
+      caseComments,
+      comments,
+      profileSummary,
+      aiNotes,
+      isAiFlagged,
+      flagReason,
+      status,
+      visaStatus
+    } = req.body;
+
+    // Build safe update payload — never touch password/credentials
+    const data = {};
+
+    // Handler (operations staff) assignment
+    if (assignedHandlerId !== undefined) data.assignedHandlerId = assignedHandlerId || null;
+    if (assignedHandlerName !== undefined) data.assignedHandlerName = assignedHandlerName || null;
+
+    // Consultant assignment
+    const finalConsultant = assignedToId || assignedConsultantId;
+    if (finalConsultant !== undefined) data.assignedToId = finalConsultant || null;
+
+    // Case comments — accept either field name from frontend
+    const incomingComments = caseComments || comments;
+    if (incomingComments !== undefined) {
+      data.caseComments = Array.isArray(incomingComments) ? incomingComments : [];
+    }
+
+    // Optional updatable fields
+    if (profileSummary !== undefined) data.profileSummary = profileSummary;
+    if (aiNotes !== undefined) data.aiNotes = aiNotes;
+    if (isAiFlagged !== undefined) data.isAiFlagged = isAiFlagged;
+    if (flagReason !== undefined) data.flagReason = flagReason;
+    if (status !== undefined) data.status = status;
+    if (visaStatus !== undefined) data.visaStatus = visaStatus;
+
+    if (Object.keys(data).length === 0) {
+      return res.status(400).json({ message: 'No valid fields to update.' });
+    }
+
+    const client = await prisma.client.update({
+      where: { id },
+      data
+    });
+
+    res.json({
+      ...client,
+      comments: Array.isArray(client.caseComments) ? client.caseComments : [],
+      clientCode: client.clientCode || null
+    });
+  } catch (error) {
+    console.error('Error in updateClient:', error);
+    res.status(500).json({ message: 'Server error updating client', error: error.message });
+  }
+};
+
 module.exports = { 
   getClients, 
   createClient, 
+  updateClient,
   updateClientStatus, 
   selectPackage, 
   generateCredentials, 

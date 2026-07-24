@@ -85,6 +85,7 @@ model Lead {
   assignedToId     String?
   assignedTo       User?    @relation("AgentLeads", fields: [assignedToId], references: [id])
   assignedAt       DateTime?
+  nextFollowUpDate DateTime?
   
   clientId         String?  @unique
   client           Client?  @relation(fields: [clientId], references: [id])
@@ -137,6 +138,7 @@ model Client {
   assignedToId     String?
   assignedTo       User?    @relation("AgentClients", fields: [assignedToId], references: [id])
   assignedAt       DateTime?
+  nextFollowUpDate DateTime?
 
   lead             Lead?
   documents        Document[]
@@ -358,19 +360,13 @@ model CommunicationLog {
 
 model AuditLog {
   id               String   @id @default(uuid())
-  leadId           String?
-  clientId         String?
-  documentId       String?
   applicationId    String?
   applicationCycle ApplicationCycle? @relation(fields: [applicationId], references: [id])
-  actorId          String?  // System, User UUID, Client ID, or Webhook ID
-  actorName        String?  // e.g., MADI SIR, Kia Car
-  actorRole        String?  // super_admin, admin, consultant, client, system
-  action           String   // e.g., STATUS_CHANGED, DOC_UPLOADED, DOC_VERIFIED, DOC_REJECTED, NOTE_ADDED
-  description      String?  @db.Text
+  actorId          String?   // System, User UUID, or Webhook ID
+  action           String?   // e.g., STATUS_CHANGED, DOC_UPLOADED
   previousState    Json?
   newState         Json?
-  createdAt        DateTime @default(now()) // Immutable (No updatedAt)
+  createdAt        DateTime @default(now()) // Immutable (No updateAt)
 
   @@map("audit_logs")
 }

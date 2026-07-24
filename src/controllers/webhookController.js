@@ -534,24 +534,9 @@ exports.handleTwilioWebhook = async (req, res) => {
     // Extract message fields
     const rawFrom = payload.From || ''; // Format: "whatsapp:+1234567890" or "+1234567890"
     const phone = rawFrom.replace('whatsapp:', '');
-    let message = payload.Body || '';
+    const message = payload.Body || '';
     const name = payload.ProfileName || ''; // Twilio ProfileName if available
     const messageId = payload.MessageSid;
-
-    // Handle Media Attachments (PDFs, Images, Documents) from Twilio WhatsApp
-    const numMedia = parseInt(payload.NumMedia || '0', 10);
-    const mediaUrl = payload.MediaUrl0;
-    const mediaType = payload.MediaContentType0 || '';
-
-    if (mediaUrl) {
-      if (mediaType.includes('pdf')) {
-        message = message ? `${message}\n[PDF: ${mediaUrl}]` : `[PDF: ${mediaUrl}]`;
-      } else if (mediaType.includes('image')) {
-        message = message ? `${message}\n[Image: ${mediaUrl}]` : `[Image: ${mediaUrl}]`;
-      } else {
-        message = message ? `${message}\n[Attachment: ${mediaUrl}]` : `[Attachment: ${mediaUrl}]`;
-      }
-    }
 
     // Deduplicate incoming Twilio messages
     if (messageId && await isDuplicateMessage(messageId)) {

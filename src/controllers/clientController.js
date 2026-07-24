@@ -14,6 +14,7 @@ const getClients = async (req, res) => {
     
     const mapped = clients.map(c => ({
       ...c,
+      onboardingDate: c.createdAt,
       name: `${c.firstName} ${c.lastName}`,
       serviceId: c.serviceType,
       assignedConsultantName: c.assignedTo?.fullName,

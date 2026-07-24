@@ -82,6 +82,7 @@ model Lead {
 
   assignedToId     String?
   assignedTo       User?    @relation("AgentLeads", fields: [assignedToId], references: [id])
+  assignedAt       DateTime?
   
   clientId         String?  @unique
   client           Client?  @relation(fields: [clientId], references: [id])
@@ -133,6 +134,7 @@ model Client {
 
   assignedToId     String?
   assignedTo       User?    @relation("AgentClients", fields: [assignedToId], references: [id])
+  assignedAt       DateTime?
 
   lead             Lead?
   documents        Document[]
@@ -168,6 +170,7 @@ model Consultation {
 
   consultantId     String?
   consultant       User?    @relation("AgentConsultations", fields: [consultantId], references: [id])
+  assignedAt       DateTime?
 
   @@map("consultations")
 }

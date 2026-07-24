@@ -39,6 +39,7 @@ const getConsultations = async (req, res) => {
         outcome: parsedOutcome,
         meetingDate: c.date,
         meetingTime: c.timeSlot,
+        assignedAt: c.assignedAt || c.createdAt,
         clientName: c.lead ? `${c.lead.firstName} ${c.lead.lastName}` : 'Unknown',
         agentName: c.consultant?.fullName || 'Unassigned',
         assignedConsultantName: c.consultant?.fullName || 'Unassigned',
@@ -559,6 +560,7 @@ const reassignConsultant = async (req, res) => {
       where: { id },
       data: {
         consultantId,
+        assignedAt: new Date(),
         internalNotes: consultation.internalNotes
           ? `${consultation.internalNotes}\n[Reassigned by ${adminUser?.fullName || 'Admin'} from ${oldConsultantName} to ${newConsultant.fullName}. Reason: ${reason || 'N/A'}]`
           : `[Reassigned by ${adminUser?.fullName || 'Admin'} from ${oldConsultantName} to ${newConsultant.fullName}. Reason: ${reason || 'N/A'}]`
@@ -572,7 +574,7 @@ const reassignConsultant = async (req, res) => {
     if (consultation.leadId) {
       await prisma.lead.update({
         where: { id: consultation.leadId },
-        data: { assignedToId: consultantId }
+        data: { assignedToId: consultantId, assignedAt: new Date() }
       });
     }
 

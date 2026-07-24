@@ -14,6 +14,7 @@ const getLeads = async (req, res) => {
     const mapped = leads.map(l => ({
       ...l,
       createdDate: l.createdAt,
+      assignedAt: l.assignedAt || l.createdAt,
       name: `${l.firstName} ${l.lastName}`,
       serviceId: l.serviceType,
       assignedConsultantId: l.assignedToId,
@@ -158,6 +159,7 @@ const createLead = async (req, res) => {
           meetingNotes,
           qualificationData: qualificationData || undefined,
           assignedToId,
+          assignedAt: assignedToId ? new Date() : null,
           preferableArea: preferableArea || null,
           budget: budget || null,
           sourceLanguage: sourceLanguage || null,
@@ -183,7 +185,7 @@ const assignLead = async (req, res) => {
     const { leadId, agentId } = req.body;
     const lead = await prisma.lead.update({
       where: { id: leadId },
-      data: { assignedToId: agentId }
+      data: { assignedToId: agentId, assignedAt: new Date() }
     });
     await syncLeadConsultation(lead.id);
     res.json(lead);
@@ -314,6 +316,7 @@ const updateLead = async (req, res) => {
         timeline,
         qualificationData,
         assignedToId: assignedConsultantId,
+        ...(assignedConsultantId ? { assignedAt: new Date() } : {}),
         preferableArea: preferableArea !== undefined ? preferableArea : undefined,
         budget: budget !== undefined ? budget : undefined,
         sourceLanguage: sourceLanguage !== undefined ? sourceLanguage : undefined,

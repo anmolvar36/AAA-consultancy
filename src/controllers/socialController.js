@@ -207,15 +207,27 @@ exports.getMessagesByPhone = async (req, res) => {
  */
 exports.sendSocialMessage = async (req, res) => {
   try {
-    const { phone, text } = req.body;
-    if (!phone || !text) {
-      return res.status(400).json({ message: 'Phone and text are required' });
+    const { phone, text, mediaUrl, mediaType } = req.body;
+    if (!phone || (!text && !mediaUrl)) {
+      return res.status(400).json({ message: 'Phone and text or media file are required' });
     }
 
     const cleanPh = cleanPhoneNumber(phone);
     const twilioTo = `whatsapp:${cleanPh}`;
 
-    console.log(`Sending manual WhatsApp message to ${twilioTo}: ${text}`);
+    // Combine text and mediaUrl if provided
+    let contentToStore = text || '';
+    if (mediaUrl) {
+      if (mediaType === 'application/pdf' || mediaUrl.endsWith('.pdf')) {
+        contentToStore = contentToStore ? `${contentToStore}\n[PDF: ${mediaUrl}]` : `[PDF: ${mediaUrl}]`;
+      } else if (mediaType?.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif)$/i.test(mediaUrl) || mediaUrl.startsWith('data:image/')) {
+        contentToStore = contentToStore ? `${contentToStore}\n[Image: ${mediaUrl}]` : `[Image: ${mediaUrl}]`;
+      } else {
+        contentToStore = contentToStore ? `${contentToStore}\n[Attachment: ${mediaUrl}]` : `[Attachment: ${mediaUrl}]`;
+      }
+    }
+
+    console.log(`Sending manual WhatsApp message to ${twilioTo}: ${contentToStore}`);
 
     let deliveryStatus = 'SENT';
     let failureReason = null;
@@ -224,18 +236,22 @@ exports.sendSocialMessage = async (req, res) => {
     if (isTwilioConfigured) {
       try {
         const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
-        await client.messages.create({
-          body: text,
+        const payload = {
+          body: text || '',
           from: TWILIO_WHATSAPP_FROM,
           to: twilioTo
-        });
+        };
+        if (mediaUrl && (mediaUrl.startsWith('http://') || mediaUrl.startsWith('https://'))) {
+          payload.mediaUrl = [mediaUrl];
+        }
+        await client.messages.create(payload);
       } catch (err) {
         console.error('Twilio manual send failed:', err.message);
         deliveryStatus = 'FAILED';
         failureReason = err.message;
       }
     } else {
-      console.log(`[MANUAL TWILIO DRY-RUN] To: ${twilioTo}, Text: ${text}`);
+      console.log(`[MANUAL TWILIO DRY-RUN] To: ${twilioTo}, Content: ${contentToStore}`);
     }
 
     const numberPart = cleanPh.replace('+', '');
@@ -258,7 +274,7 @@ exports.sendSocialMessage = async (req, res) => {
         respondedByUserId: staffUserId,
         channel: 'WHATSAPP',
         direction: 'OUTBOUND',
-        content: text,
+        content: contentToStore,
         deliveryStatus: deliveryStatus,
         failureReason: failureReason
       },
@@ -282,7 +298,9 @@ exports.sendSocialMessage = async (req, res) => {
       io.emit('new_whatsapp_message', {
         phone: cleanPh,
         name: staffName,
-        text: text,
+        text: contentToStore,
+        mediaUrl: mediaUrl || null,
+        mediaType: mediaType || null,
         timestamp: log.createdAt,
         sender: 'agent',
         respondedBy: respondedByObj
@@ -296,6 +314,8 @@ exports.sendSocialMessage = async (req, res) => {
         id: log.id,
         sender: 'agent',
         text: log.content,
+        mediaUrl: mediaUrl || null,
+        mediaType: mediaType || null,
         timestamp: log.createdAt,
         respondedBy: respondedByObj
       }

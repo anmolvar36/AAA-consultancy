@@ -151,7 +151,7 @@ exports.handleChatbotMessage = async (phone, name, text, messageId = null) => {
       await sendCustomWhatsApp(cleanPhone, rateMsg);
       return;
     } else {
-      await sendCustomWhatsApp(cleanPhone, "⚠️ Invalid selection. Please reply with a number between 1 and 4:\n\n1️⃣ Spain Visa & Residency Services\n2️⃣ Professional Case Assessment Service\n3️⃣ Property Investment Guidance Service\n4️⃣ Spanish Sworn Translation Services");
+      await sendCustomWhatsApp(cleanPhone, "⚠️ Invalid selection. Please reply with a number between 1 and 3:\n\n1️⃣ Spain Visa & Residency Services\n2️⃣ Property Investment Guidance Service\n3️⃣ Spanish Sworn Translation Services");
       return;
     }
   }

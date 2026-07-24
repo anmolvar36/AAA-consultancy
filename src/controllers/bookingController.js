@@ -75,7 +75,7 @@ exports.createEligibilityBooking = async (req, res) => {
       });
     }
 
-    // 2c. Check for Duplicate Active Bookings
+    // 2c. Check for Duplicate Active Bookings (Status-aware)
     const activeLead = await prisma.lead.findFirst({
       where: {
         OR: [
@@ -83,7 +83,7 @@ exports.createEligibilityBooking = async (req, res) => {
           { phone: { contains: normalizedPhone } }
         ],
         status: {
-          notIn: ['Lost Lead', 'Spam', 'Cold Lead', 'No Show', 'Completed']
+          notIn: ['Lost Lead', 'Spam', 'Cold Lead', 'No Show', 'Completed', 'Cancelled', 'Canceled', 'Refused']
         }
       }
     });
@@ -304,6 +304,34 @@ exports.createEligibilityBooking = async (req, res) => {
       }
     });
 
+    // 7. Create CRM Notification Record & Broadcast Real-Time Socket Event
+    try {
+      await prisma.notification.create({
+        data: {
+          userId: bestConsultantId || 'admin',
+          type: 'new_booking',
+          title: 'New Consultation Booked 📅',
+          body: `New assessment booked for ${firstName} ${lastName} on ${date} at ${timeSlot}.`,
+          clientId: client.id
+        }
+      });
+    } catch (notifErr) {
+      console.warn('[CRM Notification] Failed to create DB notification:', notifErr.message);
+    }
+
+    try {
+      const io = req.app.get('io');
+      if (io) {
+        io.to('role:admin').to('role:consultant').to(`user:${bestConsultantId}`).emit('new_booking', {
+          consultation,
+          client,
+          lead
+        });
+      }
+    } catch (ioErr) {
+      console.warn('[CRM Notification] Socket.io broadcast warning:', ioErr.message);
+    }
+
     // 7. Enqueue Reminders and No-Show Enforcer Jobs
     // Assuming meeting date/time is parsed to a JS Date object `meetingStart`
     const meetingStart = new Date(`${date} ${timeSlot}`); // Naive parsing
@@ -357,8 +385,32 @@ Your Spain Visa Eligibility Assessment is confirmed.
 _Note: Please join within 10 minutes of appointment time to avoid automatic cancellation._`;
 
           await sendCustomWhatsApp(phone, waMsg);
+
+          await prisma.communicationLog.create({
+            data: {
+              clientId: client.id,
+              phone: phone,
+              name: clientName,
+              channel: 'WHATSAPP',
+              direction: 'OUTBOUND',
+              deliveryStatus: 'SENT',
+              content: waMsg
+            }
+          }).catch(e => console.warn('[CommLog] Write error:', e.message));
         } catch (waErr) {
           console.error('[NOTIFICATIONS] Failed to send WhatsApp confirmation:', waErr.message);
+          await prisma.communicationLog.create({
+            data: {
+              clientId: client.id,
+              phone: phone,
+              name: clientName,
+              channel: 'WHATSAPP',
+              direction: 'OUTBOUND',
+              deliveryStatus: 'FAILED',
+              failureReason: waErr.message,
+              content: 'Failed WhatsApp booking confirmation'
+            }
+          }).catch(e => console.warn('[CommLog] Error write error:', e.message));
         }
 
         // 2. Send Branded Email
@@ -372,8 +424,32 @@ _Note: Please join within 10 minutes of appointment time to avoid automatic canc
             meetingLink: link,
             consultationId: consultation.id
           });
+
+          await prisma.communicationLog.create({
+            data: {
+              clientId: client.id,
+              phone: phone,
+              name: clientName,
+              channel: 'EMAIL',
+              direction: 'OUTBOUND',
+              deliveryStatus: 'SENT',
+              content: `Appointment Confirmation Email sent to ${email} for ${date} at ${timeSlot}`
+            }
+          }).catch(e => console.warn('[CommLog] Write error:', e.message));
         } catch (emailErr) {
           console.error('[NOTIFICATIONS] Failed to send Email confirmation:', emailErr.message);
+          await prisma.communicationLog.create({
+            data: {
+              clientId: client.id,
+              phone: phone,
+              name: clientName,
+              channel: 'EMAIL',
+              direction: 'OUTBOUND',
+              deliveryStatus: 'FAILED',
+              failureReason: emailErr.message,
+              content: `Failed Email booking confirmation to ${email}`
+            }
+          }).catch(e => console.warn('[CommLog] Error write error:', e.message));
         }
 
         // 3. Schedule 3 Reminders (24h, 1h, 10m before)

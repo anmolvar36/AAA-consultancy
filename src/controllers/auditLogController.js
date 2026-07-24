@@ -15,29 +15,35 @@ const getCaseTimeline = async (req, res) => {
 
     const timelineEvents = [];
 
-    // 1. Fetch Audit Log Entries
-    const whereConditions = [];
-    if (clientId) whereConditions.push({ clientId });
-    if (leadId) whereConditions.push({ leadId });
-    if (applicationId) whereConditions.push({ applicationId });
+    // 1. Fetch Audit Log Entries (Safe try-catch wrapper)
+    try {
+      const whereConditions = [];
+      if (clientId) whereConditions.push({ clientId });
+      if (leadId) whereConditions.push({ leadId });
+      if (applicationId) whereConditions.push({ applicationId });
 
-    const auditLogs = await prisma.auditLog.findMany({
-      where: { OR: whereConditions },
-      orderBy: { createdAt: 'desc' },
-      take: 100
-    });
+      if (whereConditions.length > 0) {
+        const auditLogs = await prisma.auditLog.findMany({
+          where: { OR: whereConditions },
+          orderBy: { createdAt: 'desc' },
+          take: 100
+        });
 
-    auditLogs.forEach(log => {
-      timelineEvents.push({
-        id: log.id,
-        timestamp: log.createdAt,
-        type: log.action,
-        actorName: log.actorName || 'System',
-        actorRole: log.actorRole || 'system',
-        description: log.description || '',
-        category: 'AUDIT'
-      });
-    });
+        auditLogs.forEach(log => {
+          timelineEvents.push({
+            id: log.id,
+            timestamp: log.createdAt,
+            type: log.action,
+            actorName: log.actorName || 'System',
+            actorRole: log.actorRole || 'system',
+            description: log.description || '',
+            category: 'AUDIT'
+          });
+        });
+      }
+    } catch (auditErr) {
+      console.warn('[AuditLog Query Warning] Falling back to standard entity timeline:', auditErr.message);
+    }
 
     // 2. Fetch Lead details & history if leadId is provided
     let targetPhone = null;

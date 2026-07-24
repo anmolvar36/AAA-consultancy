@@ -104,6 +104,37 @@ const updateUser = async (req, res) => {
       spokenLanguages, nationalities, commissionRate, immigrationBio, customPermissions
     } = req.body;
 
+    const existingUser = await prisma.user.findUnique({ where: { id } });
+    if (!existingUser) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const newRateNum = commissionRate !== undefined ? Number(commissionRate) : existingUser.commissionRate;
+    if (commissionRate !== undefined && existingUser.commissionRate !== newRateNum) {
+      // Calculate current revenue for this agent
+      const agentClients = await prisma.client.findMany({
+        where: { assignedToId: id },
+        select: { id: true }
+      });
+      const clientIds = agentClients.map(c => c.id);
+      const paidPayments = await prisma.payment.findMany({
+        where: { clientId: { in: clientIds }, status: 'Paid' },
+        select: { amount: true }
+      });
+      const totalRevenue = paidPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
+
+      // Create Rate History Log
+      await prisma.commissionRateHistory.create({
+        data: {
+          agentId: id,
+          oldRate: existingUser.commissionRate || 0,
+          newRate: newRateNum,
+          changedById: req.user ? req.user.id : id,
+          revenueAtChange: totalRevenue
+        }
+      });
+    }
+
     const user = await prisma.user.update({
       where: { id },
       data: {
@@ -113,13 +144,14 @@ const updateUser = async (req, res) => {
         role,
         spokenLanguages,
         nationalities,
-        commissionRate: Number(commissionRate) || 0,
+        commissionRate: newRateNum,
         immigrationBio,
         customPermissions
       }
     });
     res.json(user);
   } catch (error) {
+    console.error('Error updating user:', error);
     res.status(500).json({ message: 'Server error' });
   }
 };

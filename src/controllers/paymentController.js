@@ -523,20 +523,36 @@ const getCommissionsReport = async (req, res) => {
 };
 const createStripeCheckoutSession = async (req, res) => {
   try {
-    const { packageId, amount, discount, paymentMethod } = req.body;
-    const clientId = req.user.id;
+    const { packageId, amount, discount, paymentMethod, clientId: bodyClientId } = req.body;
+    let clientId = bodyClientId || req.user?.id;
 
-    if (!clientId) {
-      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    let clientRecord = null;
+    if (clientId) {
+      clientRecord = await prisma.client.findUnique({
+        where: { id: clientId }
+      });
     }
 
-    const clientRecord = await prisma.client.findUnique({
-      where: { id: clientId }
-    });
+    if (!clientRecord && req.user?.email) {
+      clientRecord = await prisma.client.findFirst({
+        where: { email: req.user.email }
+      });
+    }
+
+    if (!clientRecord && req.user?.id) {
+      const userObj = await prisma.user.findUnique({ where: { id: req.user.id } });
+      if (userObj?.email) {
+        clientRecord = await prisma.client.findFirst({
+          where: { email: userObj.email }
+        });
+      }
+    }
 
     if (!clientRecord) {
-      return res.status(404).json({ success: false, message: 'Client not found' });
+      return res.status(404).json({ success: false, message: 'Client profile not found. Please log in or contact support.' });
     }
+
+    clientId = clientRecord.id;
 
     // Helper helper to get applicants count
     const getApplicantsCount = (countStr) => {

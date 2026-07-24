@@ -1,8 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const { getCaseTimeline } = require('../controllers/auditLogController');
-const { protect } = require('../middlewares/authMiddleware');
+const { authMiddleware } = require('../middlewares/authMiddleware');
 
-router.get('/timeline', protect, getCaseTimeline);
+router.get('/timeline', authMiddleware, getCaseTimeline);
 
 module.exports = router;

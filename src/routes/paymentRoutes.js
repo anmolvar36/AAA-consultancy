@@ -19,7 +19,7 @@ const router = express.Router();
 router.route('/')
   .get(authMiddleware, rbacMiddleware(['super_admin', 'admin', 'finance', 'operations']), getPayments);
 
-router.post('/generate-link', authMiddleware, rbacMiddleware(['super_admin', 'admin', 'finance', 'operations']), generatePaymentLink);
+router.post('/generate-link', authMiddleware, rbacMiddleware(['super_admin', 'admin', 'finance', 'operations', 'consultant']), generatePaymentLink);
 router.patch('/:id/status', authMiddleware, rbacMiddleware(['super_admin', 'admin', 'finance']), updatePaymentStatus);
 router.post('/create-checkout-session', authMiddleware, createStripeCheckoutSession);
 router.post('/verify-checkout-session', authMiddleware, verifyStripeCheckoutSession);

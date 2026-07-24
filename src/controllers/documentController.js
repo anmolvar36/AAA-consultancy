@@ -235,9 +235,9 @@ const uploadDocument = async (req, res) => {
             console.error('Failed to notify operator via WhatsApp:', e.message);
           });
         }
-      } else {
-        console.log(`[Notification] Client ${clientName} has no assigned operator — notification skipped.`);
       }
+    }
+
     // Log activity
     const { logActivity } = require('../services/auditService');
     const uploaderName = req.user ? (req.user.fullName || req.user.email) : (client ? `${client.firstName} ${client.lastName}` : 'Client');

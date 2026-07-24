@@ -639,7 +639,8 @@ const updateClient = async (req, res) => {
       isAiFlagged,
       flagReason,
       status,
-      visaStatus
+      visaStatus,
+      nextFollowUpDate
     } = req.body;
 
     // Build safe update payload — never touch password/credentials
@@ -669,6 +670,7 @@ const updateClient = async (req, res) => {
     if (flagReason !== undefined) data.flagReason = flagReason;
     if (status !== undefined) data.status = status;
     if (visaStatus !== undefined) data.visaStatus = visaStatus;
+    if (nextFollowUpDate !== undefined) data.nextFollowUpDate = nextFollowUpDate ? new Date(nextFollowUpDate) : null;
 
     if (Object.keys(data).length === 0) {
       return res.status(400).json({ message: 'No valid fields to update.' });

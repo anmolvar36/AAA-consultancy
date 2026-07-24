@@ -300,7 +300,8 @@ const updateLead = async (req, res) => {
       budget,
       sourceLanguage,
       targetLanguage,
-      wordCount
+      wordCount,
+      nextFollowUpDate
     } = req.body;
 
     const lead = await prisma.lead.update({
@@ -322,6 +323,7 @@ const updateLead = async (req, res) => {
         qualificationData,
         assignedToId: assignedConsultantId,
         ...(assignedConsultantId ? { assignedAt: new Date() } : {}),
+        nextFollowUpDate: nextFollowUpDate !== undefined ? (nextFollowUpDate ? new Date(nextFollowUpDate) : null) : undefined,
         preferableArea: preferableArea !== undefined ? preferableArea : undefined,
         budget: budget !== undefined ? budget : undefined,
         sourceLanguage: sourceLanguage !== undefined ? sourceLanguage : undefined,

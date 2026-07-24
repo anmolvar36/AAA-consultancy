@@ -48,7 +48,7 @@ const getCaseTimeline = async (req, res) => {
       const lead = await prisma.lead.findUnique({
         where: { id: leadId },
         include: {
-          consultations: { include: { agent: { select: { fullName: true } } } },
+          consultations: { include: { consultant: { select: { fullName: true } } } },
           assignedTo: { select: { fullName: true } }
         }
       });
@@ -90,7 +90,7 @@ const getCaseTimeline = async (req, res) => {
               id: `consultation-${c.id}`,
               timestamp: c.createdAt || c.updatedAt,
               type: `CONSULTATION_${c.status ? c.status.toUpperCase().replace(/\s+/g, '_') : 'SCHEDULED'}`,
-              actorName: c.agent?.fullName || 'Assigned Agent',
+              actorName: c.consultant?.fullName || 'Assigned Consultant',
               actorRole: 'consultant',
               description: `Consultation Meeting (${c.status}): Scheduled for ${c.date} at ${c.timeSlot}.${c.meetingLink ? ' Zoom link generated.' : ''}`,
               category: 'MEETING'

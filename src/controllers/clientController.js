@@ -4,13 +4,24 @@ const jwt = require('jsonwebtoken');
 
 const getClients = async (req, res) => {
   try {
-    const clients = await prisma.client.findMany({
-      include: {
-        assignedTo: { select: { fullName: true } },
-        applicationCycles: true
-      },
-      orderBy: { createdAt: 'desc' }
-    });
+    let clients = [];
+    try {
+      clients = await prisma.client.findMany({
+        include: {
+          assignedTo: { select: { fullName: true } },
+          applicationCycles: true
+        },
+        orderBy: { createdAt: 'desc' }
+      });
+    } catch (dbErr) {
+      console.warn('[getClients Warning] Retrying query without applicationCycles relation:', dbErr.message);
+      clients = await prisma.client.findMany({
+        include: {
+          assignedTo: { select: { fullName: true } }
+        },
+        orderBy: { createdAt: 'desc' }
+      });
+    }
     
     const mapped = clients.map(c => ({
       ...c,
@@ -22,7 +33,8 @@ const getClients = async (req, res) => {
       assignedConsultantId: c.assignedToId,
       hasCredentials: !!c.password,
       clientCode: c.clientCode || null,
-      comments: Array.isArray(c.caseComments) ? c.caseComments : []
+      comments: Array.isArray(c.caseComments) ? c.caseComments : [],
+      applicationCycles: c.applicationCycles || []
     }));
     
     res.json(mapped);

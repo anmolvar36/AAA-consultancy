@@ -266,6 +266,10 @@ const createClient = async (req, res) => {
               });
             }
           }
+        } catch (stripeErr) {
+          console.warn('[Client Init Stripe Warning]:', stripeErr.message);
+        }
+
         // 2. Generate Zoho Invoice URL (or Stripe Checkout URL fallback)
         let zohoInvoiceUrl = null;
         try {

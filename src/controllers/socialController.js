@@ -378,14 +378,32 @@ exports.proxyTwilioMedia = async (req, res) => {
     }
 
     const axios = require('axios');
-    const response = await axios({
-      url,
-      method: 'GET',
-      responseType: 'stream',
-      auth: {
-        username: TWILIO_ACCOUNT_SID,
-        password: TWILIO_AUTH_TOKEN
+    let targetUrl = url;
+
+    // 1. Fetch the media URL without following redirects to get the S3 link
+    try {
+      await axios({
+        url: targetUrl,
+        method: 'GET',
+        maxRedirects: 0,
+        auth: {
+          username: TWILIO_ACCOUNT_SID,
+          password: TWILIO_AUTH_TOKEN
+        }
+      });
+    } catch (err) {
+      if (err.response && [301, 302, 303, 307].includes(err.response.status)) {
+        targetUrl = err.response.headers.location;
+      } else {
+        throw err;
       }
+    }
+
+    // 2. Fetch the actual media from the S3 link (without Auth headers)
+    const response = await axios({
+      url: targetUrl,
+      method: 'GET',
+      responseType: 'stream'
     });
 
     res.set('Content-Type', response.headers['content-type']);

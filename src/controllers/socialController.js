@@ -32,7 +32,11 @@ const parseMessageContent = (content) => {
   if (!content) return { text: '', mediaUrl: null };
   const fileMatch = content.match(/\[FILE:\s*(.+?)\]/);
   if (fileMatch) {
-    const mediaUrl = fileMatch[1];
+    let mediaUrl = fileMatch[1];
+    if (mediaUrl.includes('api.twilio.com')) {
+      const baseUrl = process.env.VITE_API_URL ? process.env.VITE_API_URL.replace('/api/v1', '') : 'http://localhost:5000';
+      mediaUrl = `${baseUrl}/api/v1/social/media-proxy?url=${encodeURIComponent(mediaUrl)}`;
+    }
     const text = content.replace(/\[FILE:\s*(.+?)\]/, '').trim();
     return { text, mediaUrl };
   }
@@ -360,5 +364,34 @@ exports.uploadMedia = async (req, res) => {
   } catch (error) {
     console.error('Error uploading social media:', error.message);
     return res.status(500).json({ message: 'Upload failed', error: error.message });
+  }
+};
+
+/**
+ * Proxy Twilio Media URLs to handle HTTP Basic Auth
+ */
+exports.proxyTwilioMedia = async (req, res) => {
+  try {
+    const { url } = req.query;
+    if (!url || !url.includes('api.twilio.com')) {
+      return res.status(400).send('Invalid media URL');
+    }
+
+    const axios = require('axios');
+    const response = await axios({
+      url,
+      method: 'GET',
+      responseType: 'stream',
+      auth: {
+        username: TWILIO_ACCOUNT_SID,
+        password: TWILIO_AUTH_TOKEN
+      }
+    });
+
+    res.set('Content-Type', response.headers['content-type']);
+    response.data.pipe(res);
+  } catch (error) {
+    console.error('Twilio media proxy error:', error.message);
+    res.status(500).send('Failed to fetch media');
   }
 };

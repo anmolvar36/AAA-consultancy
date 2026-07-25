@@ -41,14 +41,12 @@ io.on('connection', (socket) => {
   });
 });
 
-// Middleware
 app.use(cors({
   origin: true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'Access-Control-Allow-Origin', 'X-com-zoho-invoice-organizationid']
 }));
-app.options('*', cors());
 
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 app.use(express.json());
@@ -104,22 +102,6 @@ startDiscountScheduler();
 // Initialize Payment Drip Reminders scheduler
 const { startReminderScheduler } = require('./services/reminderScheduler');
 startReminderScheduler();
-
-// Global API Error Handler
-app.use((err, req, res, next) => {
-  console.error('[Global API Error Handler]:', err);
-  if (!res.headersSent) {
-    res.status(err.status || 500).json({ error: err.message || 'Internal Server Error' });
-  }
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('[Unhandled Rejection at Promise]:', reason);
-});
-
-process.on('uncaughtException', (err) => {
-  console.error('[Uncaught Exception]:', err);
-});
 
 // Start Server
 const PORT = process.env.PORT || 5000;

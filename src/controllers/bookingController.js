@@ -332,6 +332,22 @@ exports.createEligibilityBooking = async (req, res) => {
       console.warn('[CRM Notification] Socket.io broadcast warning:', ioErr.message);
     }
 
+    // Trigger In-App Notifications for all staff
+    try {
+      const { createLeadNotification } = require('./notificationController');
+      createLeadNotification({
+        leadName: `${firstName} ${lastName}`,
+        email: email.toLowerCase(),
+        phone,
+        country: countryOfResidence,
+        serviceCategory: serviceType,
+        appointmentDate: `${date} ${timeSlot}`,
+        reqApp: req.app
+      }).catch(err => console.error('[Booking Notification Error]:', err.message));
+    } catch (notifErr) {
+      console.error('[Booking Notification Init Error]:', notifErr.message);
+    }
+
     // 7. Enqueue Reminders and No-Show Enforcer Jobs
     // Assuming meeting date/time is parsed to a JS Date object `meetingStart`
     const meetingStart = new Date(`${date} ${timeSlot}`); // Naive parsing

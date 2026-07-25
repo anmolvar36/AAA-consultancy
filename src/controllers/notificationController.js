@@ -104,4 +104,52 @@ const createDocumentNotification = async ({ userId, clientName, clientId, docume
   }
 };
 
-module.exports = { getMyNotifications, getUnreadCount, markRead, markAllRead, createDocumentNotification };
+// Internal helper — called when a new lead form is submitted or assessment booked
+const createLeadNotification = async ({ leadName, email, phone, country, serviceCategory, appointmentDate, reqApp }) => {
+  try {
+    // Find all staff members (super_admin, admin, operations, agent)
+    const staffMembers = await prisma.user.findMany({
+      where: {
+        role: { in: ['super_admin', 'admin', 'operations', 'agent'] }
+      },
+      select: { id: true }
+    });
+
+    if (!staffMembers || staffMembers.length === 0) return;
+
+    const isBooking = !!appointmentDate;
+    const title = isBooking 
+      ? `📅 Assessment Booked: ${leadName || email || 'Client'}`
+      : `🎯 New Lead Ingested: ${leadName || email || 'Client'}`;
+
+    const formattedDate = appointmentDate ? new Date(appointmentDate).toLocaleString() : '';
+    const body = isBooking
+      ? `${leadName || email} (${country || 'Global'}) booked a Free Assessment for ${serviceCategory || 'Spain Visa'} on ${formattedDate}.`
+      : `${leadName || email} (${country || 'Global'}) submitted a new lead inquiry for ${serviceCategory || 'Spain Visa'}.`;
+
+    const notificationEntries = staffMembers.map(staff => ({
+      userId: staff.id,
+      type: isBooking ? 'new_booking' : 'new_lead',
+      title,
+      body,
+      isRead: false
+    }));
+
+    await prisma.notification.createMany({
+      data: notificationEntries
+    });
+
+    console.log(`[Lead Notification Created] Created ${notificationEntries.length} notifications for ${leadName || email}`);
+
+    if (reqApp) {
+      const io = reqApp.get('io');
+      if (io) {
+        io.emit('new-notification', { title, body, isBooking });
+      }
+    }
+  } catch (error) {
+    console.error('Error creating lead notification:', error);
+  }
+};
+
+module.exports = { getMyNotifications, getUnreadCount, markRead, markAllRead, createDocumentNotification, createLeadNotification };

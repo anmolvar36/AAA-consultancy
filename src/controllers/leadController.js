@@ -171,6 +171,18 @@ const createLead = async (req, res) => {
       });
       console.log(`New Lead created (ID: ${lead.id}, Phone: ${lead.phone})`);
 
+      // Trigger In-App Notifications for all staff
+      const { createLeadNotification } = require('./notificationController');
+      createLeadNotification({
+        leadName: `${lead.firstName} ${lead.lastName}`,
+        email: lead.email,
+        phone: lead.phone,
+        country: lead.countryOfResidence,
+        serviceCategory: lead.serviceType,
+        appointmentDate: lead.meetingPreferredDate ? `${lead.meetingPreferredDate} ${lead.meetingPreferredTime || ''}` : null,
+        reqApp: req.app
+      }).catch(err => console.error('[Lead Notification Error]:', err.message));
+
     // Auto-create consultation — runs in background, does NOT block response
     res.status(201).json(lead);
     syncLeadConsultation(lead.id).catch(err => console.error('[BG] syncLeadConsultation failed:', err.message));

@@ -361,43 +361,92 @@ const setupWorkers = () => {
     }
 
     if (job.name === 'google-review-request-drip') {
-      const { clientId } = job.data;
+      const { clientId, leadId, phone, clientName, dripIndex = 2 } = job.data;
       const prisma = require('../config/db');
 
       try {
-        const client = await prisma.client.findUnique({
-          where: { id: clientId }
-        });
+        let targetPhone = phone;
+        let targetName = clientName;
+        let targetEmail = null;
 
-        if (!client) {
-          console.warn(`[Google-Review-Drip] Client not found: ${clientId}`);
+        if (clientId) {
+          const client = await prisma.client.findUnique({ where: { id: clientId } });
+          if (client) {
+            if (client.googleReviewSubmitted) {
+              console.log(`[Google-Review-Drip] Client ${client.email} already submitted Google review. Skipping.`);
+              return;
+            }
+            targetPhone = targetPhone || client.phone;
+            targetName = targetName || `${client.firstName} ${client.lastName}`.trim();
+            targetEmail = client.email;
+          }
+        } else if (leadId) {
+          const lead = await prisma.lead.findUnique({ where: { id: leadId } });
+          if (lead) {
+            targetPhone = targetPhone || lead.phone;
+            targetName = targetName || `${lead.firstName} ${lead.lastName}`.trim();
+            targetEmail = lead.email;
+          }
+        }
+
+        if (!targetPhone) {
+          console.warn(`[Google-Review-Drip] Missing phone number for job ${job.id}. Skipping.`);
           return;
         }
 
-        // If client already submitted google review, skip review request
-        if (client.googleReviewSubmitted) {
-          console.log(`[Google-Review-Drip] Client ${client.email} already submitted Google review. Skipping.`);
-          return;
-        }
-
-        const clientName = `${client.firstName} ${client.lastName}`;
+        const { sendWhatsAppMessage, sendGoogleReviewRequestWhatsApp } = require('../services/whatsappService');
         const { sendCustomWhatsApp } = require('../services/chatbotService');
 
-        const msg = `Hello *${clientName}*,\n\nThank you for working with AAA Business Consultancy. We'd love to hear your feedback! Please take 1 minute to leave us a Google review here:\n⭐️ https://g.page/r/CXugL6bqOJCXEAI/review`;
-        await sendCustomWhatsApp(client.phone, msg).catch(err => console.error('[BG-WA] Google review WA failed:', err.message));
+        if (dripIndex === 2) {
+          // 2nd Message (3 Days Post-Consultation) - Registered Twilio Template google_review
+          try {
+            await sendWhatsAppMessage({
+              to: targetPhone,
+              templateName: 'google_review',
+              languageCode: 'en',
+              components: [
+                {
+                  type: 'body',
+                  parameters: [
+                    { type: 'text', text: targetName || 'Applicant' }
+                  ]
+                }
+              ]
+            });
+            console.log(`[Google-Review-Drip] Sent 3-day Google Review template (google_review) to ${targetPhone}`);
+          } catch (waErr) {
+            console.warn('[Google-Review-Drip] Registered template send fallback to custom message:', waErr.message);
+            const msg = `Hello *${targetName || 'Client'}*,\n\nWe hope your consultation with AAA Business Consultancy was helpful! 🇪🇸\n\nIf you enjoyed your experience with our advisors, could you please spare 30 seconds to share your feedback on Google? Your review means the world to us and helps others find us.\n\n⭐ Leave your Google Review here:\nhttps://g.page/r/CXugL6bqOJCXEAI/review\n\nThank you so much for your support!`;
+            await sendCustomWhatsApp(targetPhone, msg);
+          }
+        } else if (dripIndex === 3) {
+          // 3rd Message (7 Days / 1 Week Post-Consultation) - Final Reminder
+          const msg = `Hello *${targetName || 'Client'}*,\n\nThis is a final gentle reminder from AAA Business Consultancy! 🌟\n\nIf you haven't had a chance yet, we would be incredibly grateful if you could share a quick Google Review about your consultation experience:\n\n⭐ Leave your Google Review here:\nhttps://g.page/r/CXugL6bqOJCXEAI/review\n\nThank you for trusting us with your Spain relocation journey!`;
+          await sendCustomWhatsApp(targetPhone, msg);
+          console.log(`[Google-Review-Drip] Sent 7-day Google Review final reminder to ${targetPhone}`);
+        } else {
+          // 1st Message fallback / direct invocation
+          await sendGoogleReviewRequestWhatsApp({
+            phone: targetPhone,
+            clientName: targetName,
+            clientId,
+            leadId
+          });
+        }
 
-        await sendEmail({
-          to: client.email,
-          subject: 'Share Your Experience with AAA Business Consultancy!',
-          html: `<h3>Share Your Feedback</h3>
-                 <p>Dear ${client.firstName},</p>
-                 <p>Thank you for choosing AAA Business Consultancy for your Spain Relocation path.</p>
-                 <p>Please take 1 minute to share your experience by leaving us a Google review here:</p>
-                 <p><a href="https://g.page/r/CXugL6bqOJCXEAI/review" style="background-color: #ffc107; color: black; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">Leave a Google Review</a></p>`
-        }).catch(err => console.error('[BG-Email] Google review email failed:', err.message));
-        console.log(`[Google-Review-Drip] Sent Google review request to ${client.email}`);
+        if (targetEmail) {
+          await sendEmail({
+            to: targetEmail,
+            subject: 'Share Your Experience with AAA Business Consultancy!',
+            html: `<h3>Share Your Feedback</h3>
+                   <p>Dear ${targetName || 'Client'},</p>
+                   <p>Thank you for choosing AAA Business Consultancy for your Spain Relocation path.</p>
+                   <p>Please take 1 minute to share your experience by leaving us a Google review here:</p>
+                   <p><a href="https://g.page/r/CXugL6bqOJCXEAI/review" style="background-color: #ffc107; color: black; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">Leave a Google Review</a></p>`
+          }).catch(err => console.error('[BG-Email] Google review email failed:', err.message));
+        }
       } catch (err) {
-        console.error(`[Google-Review-Drip] Error in Google review drip processing for client ${clientId}:`, err.message);
+        console.error(`[Google-Review-Drip] Error in Google review drip processing:`, err.message);
         throw err;
       }
       return;

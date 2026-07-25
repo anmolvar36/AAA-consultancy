@@ -272,13 +272,43 @@ exports.sendInvoiceWhatsApp = async ({ client, amount, discount, netAmount, serv
       console.warn('[Invoice WhatsApp] Deduplication check warning:', dedupErr.message);
     }
 
+    let activeTempPassword = tempPassword;
+    if (!activeTempPassword && client && client.id) {
+      try {
+        const bcrypt = require('bcrypt');
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%';
+        let plainPass = '';
+        for (let i = 0; i < 8; i++) plainPass += chars.charAt(Math.floor(Math.random() * chars.length));
+
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(plainPass, salt);
+
+        await prisma.client.update({
+          where: { id: client.id },
+          data: {
+            password: hashedPassword,
+            isTemporaryPassword: true
+          }
+        });
+
+        activeTempPassword = plainPass;
+        console.log(`[Invoice WhatsApp] Generated fresh temporary password for client ${client.id}`);
+      } catch (passErr) {
+        console.warn('[Invoice WhatsApp] Could not auto-generate temp password:', passErr.message);
+      }
+    }
+
+    if (!activeTempPassword) {
+      activeTempPassword = 'Check registered email';
+    }
+
     const { sendCustomWhatsApp } = require('./chatbotService');
     const loginUrl = portalUrl || `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/portal/login`;
     const paymentLink = checkoutUrl || loginUrl;
     const clientName = `${client.firstName} ${client.lastName}`.trim();
     const finalPrice = Number(netAmount || amount || 0);
 
-    const message = `Hello *${clientName}*, welcome to AAA Business Consultancy! 🇪🇸\n\nYour Spain Relocation profile has been initialized.\n\n💳 *Invoice Amount:* €${finalPrice.toLocaleString()}\n📌 *Service:* ${serviceType || 'Spain Relocation Legal Package'}\n\n1️⃣ *Pay Invoice (1-Click Stripe Checkout):*\n🔗 ${paymentLink}\n\n2️⃣ *Client Portal Login Credentials:*\n🔗 ${loginUrl}\n👤 *Username:* ${client.email}\n🔑 *Temp Password:* ${tempPassword || 'Set on Portal'}\n\nThank you for choosing AAA Business Consultancy!`;
+    const message = `Hello *${clientName}*, welcome to AAA Business Consultancy! 🇪🇸\n\nYour Spain Relocation profile has been initialized.\n\n💳 *Invoice Amount:* €${finalPrice.toLocaleString()}\n📌 *Service:* ${serviceType || 'Spain Relocation Legal Package'}\n\n1️⃣ *Pay Invoice (Official Zoho / Payment Link):*\n🔗 ${paymentLink}\n\n2️⃣ *Client Portal Login Credentials:*\n🔗 ${loginUrl}\n👤 *Username:* ${client.email}\n🔑 *Temp Password:* ${activeTempPassword}\n\nThank you for choosing AAA Business Consultancy!`;
 
     await sendCustomWhatsApp(client.phone, message);
     console.log(`[Invoice WhatsApp] Dispatched single invoice notification to ${client.phone}`);

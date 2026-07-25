@@ -21,4 +21,7 @@ router.post('/telegram', webhookController.handleTelegramWebhook);
 // Zoom (URL validation and Recording Completed events)
 router.post('/zoom', webhookController.handleZoomWebhook);
 
+// Zoho Invoice Webhook
+router.post('/zoho', webhookController.handleZohoWebhook);
+
 module.exports = router;

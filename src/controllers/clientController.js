@@ -266,11 +266,25 @@ const createClient = async (req, res) => {
               });
             }
           }
-        } catch (stripeErr) {
-          console.warn('[Client Init Stripe Session Engine Warning]:', stripeErr.message);
+        // 2. Generate Zoho Invoice URL (or Stripe Checkout URL fallback)
+        let zohoInvoiceUrl = null;
+        try {
+          const zohoInvoiceService = require('../services/zohoInvoiceService');
+          const zohoRes = await zohoInvoiceService.createZohoInvoice({
+            client,
+            amount: 2000,
+            discount: 0,
+            netAmount: 2000,
+            serviceType: client.serviceType
+          });
+          if (zohoRes && zohoRes.paymentUrl) {
+            zohoInvoiceUrl = zohoRes.paymentUrl;
+          }
+        } catch (zohoErr) {
+          console.warn('[Client Init Zoho Invoice Warning]:', zohoErr.message);
         }
 
-        const finalCheckoutUrl = directCheckoutUrl || portalUrl;
+        const finalCheckoutUrl = zohoInvoiceUrl || directCheckoutUrl || portalUrl;
 
         sendInvoiceNotificationEmail({
           to: client.email,

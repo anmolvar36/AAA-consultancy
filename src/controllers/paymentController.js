@@ -116,8 +116,29 @@ const generatePaymentLink = async (req, res) => {
         if (tabbyRes.data?.configuration?.available_products?.installments?.[0]?.web_url) {
           paymentUrl = tabbyRes.data.configuration.available_products.installments[0].web_url;
         }
-      } catch (tabbyErr) {
-        console.warn('[Tabby Session Engine] Tabby API call fallback to standard portal link:', tabbyErr.message);
+    // 3. Zoho Invoice Generator
+    if (gateway === 'zoho' || !gateway || gateway === 'stripe') {
+      try {
+        const clientObj = await prisma.client.findUnique({ where: { id: clientId } });
+        const zohoInvoiceService = require('../services/zohoInvoiceService');
+        const zohoRes = await zohoInvoiceService.createZohoInvoice({
+          client: clientObj,
+          amount: Number(amount) || 0,
+          discount: Number(discount) || 0,
+          netAmount: finalAmount,
+          serviceType: clientObj?.serviceType,
+          dueDate: payment.dueDate
+        });
+
+        if (zohoRes && zohoRes.paymentUrl) {
+          paymentUrl = zohoRes.paymentUrl;
+          await prisma.payment.update({
+            where: { id: payment.id },
+            data: { gatewayId: zohoRes.invoiceId }
+          });
+        }
+      } catch (zohoErr) {
+        console.warn('[Zoho Invoice Engine] Could not create Zoho session:', zohoErr.message);
       }
     }
 

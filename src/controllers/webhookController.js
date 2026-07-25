@@ -633,3 +633,65 @@ exports.handleTwilioWebhook = async (req, res) => {
   }
 };
 
+/**
+ * Express Controller Action for Zoho Invoice Webhooks.
+ * Receives payment completion & invoice status updates from Zoho Invoice API.
+ */
+exports.handleZohoWebhook = async (req, res) => {
+  try {
+    const payload = req.body || {};
+    console.log('Received Zoho Webhook payload:', JSON.stringify(payload, null, 2));
+
+    // Respond 200 OK to Zoho immediately
+    res.status(200).send('OK');
+
+    const invoice = payload.invoice || payload.event_data?.invoice;
+    const payment = payload.payment || payload.event_data?.payment;
+    const invoiceId = invoice?.invoice_id || payment?.invoice_id || payload.invoice_id;
+    const eventType = payload.event_type || payload.event;
+    const status = (invoice?.status || payload.status || '').toLowerCase();
+
+    if (status === 'paid' || eventType === 'payment.created' || eventType === 'invoice.status_changed') {
+      if (invoiceId) {
+        const paymentRecord = await prisma.payment.findFirst({
+          where: {
+            OR: [
+              { gatewayId: invoiceId },
+              { id: invoiceId }
+            ]
+          },
+          include: { client: true }
+        });
+
+        if (paymentRecord && paymentRecord.status !== 'Paid') {
+          await prisma.payment.update({
+            where: { id: paymentRecord.id },
+            data: {
+              status: 'Paid',
+              paymentMethod: 'ZOHO_STRIPE',
+              transactionId: payment?.payment_id || `zoho-tx-${Date.now()}`
+            }
+          });
+
+          if (paymentRecord.clientId) {
+            await prisma.client.update({
+              where: { id: paymentRecord.clientId },
+              data: {
+                status: 'Payment Received',
+                visaStatus: 'Document Preparation',
+                documentUploadAllowed: true
+              }
+            });
+            console.log(`[Zoho Webhook] Payment ${paymentRecord.id} for client ${paymentRecord.clientId} updated to Paid.`);
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Error handling Zoho webhook:', error.message);
+    if (!res.headersSent) {
+      res.status(500).send('Internal Server Error');
+    }
+  }
+};
+

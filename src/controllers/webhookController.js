@@ -388,11 +388,16 @@ exports.verifyMetaWebhook = (req, res) => {
  * Background worker logic to extract Zoom cloud recording share link
  * and link it to the matching Consultation in the database.
  */
-async function processZoomRecording(payload) {
-  const meetingId = payload.object.id;
+async function processZoomRecording(requestBody) {
+  const zoomPayload = requestBody.payload;
+  if (!zoomPayload || !zoomPayload.object) {
+    console.error('Invalid Zoom payload structure:', JSON.stringify(requestBody));
+    return;
+  }
+  const meetingId = zoomPayload.object.id;
   
   // Extract Zoom Cloud Share URL or fallback to the play URL of the first file
-  const shareUrl = payload.object.share_url || payload.object.recording_files?.[0]?.play_url;
+  const shareUrl = zoomPayload.object.share_url || zoomPayload.object.recording_files?.[0]?.play_url;
   
   if (!shareUrl) {
     console.warn(`No share_url or play_url found for Zoom meeting ${meetingId}`);

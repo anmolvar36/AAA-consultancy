@@ -28,6 +28,21 @@ function cleanPhoneNumber(phone) {
   return clean;
 }
 
+const parseMessageContent = (content) => {
+  if (!content) return { text: '', mediaUrl: null };
+  const fileMatch = content.match(/\[FILE:\s*(.+?)\]/);
+  if (fileMatch) {
+    let mediaUrl = fileMatch[1];
+    if (mediaUrl.includes('api.twilio.com')) {
+      const baseUrl = process.env.VITE_API_URL ? process.env.VITE_API_URL.replace('/api/v1', '') : 'http://localhost:5000';
+      mediaUrl = `${baseUrl}/api/v1/social/media-proxy?url=${encodeURIComponent(mediaUrl)}`;
+    }
+    const text = content.replace(/\[FILE:\s*(.+?)\]/, '').trim();
+    return { text, mediaUrl };
+  }
+  return { text: content, mediaUrl: null };
+};
+
 /**
  * Get all conversations grouped by phone number
  */
@@ -106,18 +121,22 @@ exports.getConversations = async (req, res) => {
         }
       });
 
-      const messages = messagesLogs.map(m => ({
-        id: m.id,
-        sender: m.direction === 'INBOUND' ? 'customer' : (m.direction === 'SYSTEM' ? 'system' : 'agent'),
-        text: m.content,
-        timestamp: new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        respondedBy: m.respondedByUser ? {
-          id: m.respondedByUser.id,
-          name: m.respondedByUser.fullName,
-          role: m.respondedByUser.role,
-          avatar: m.respondedByUser.avatar
-        } : (m.direction === 'OUTBOUND' ? { name: m.name || 'Agent' } : null)
-      }));
+      const messages = messagesLogs.map(m => {
+        const parsed = parseMessageContent(m.content);
+        return {
+          id: m.id,
+          sender: m.direction === 'INBOUND' ? 'customer' : (m.direction === 'SYSTEM' ? 'system' : 'agent'),
+          text: parsed.text,
+          mediaUrl: parsed.mediaUrl,
+          timestamp: new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          respondedBy: m.respondedByUser ? {
+            id: m.respondedByUser.id,
+            name: m.respondedByUser.fullName,
+            role: m.respondedByUser.role,
+            avatar: m.respondedByUser.avatar
+          } : (m.direction === 'OUTBOUND' ? { name: m.name || 'Agent' } : null)
+        };
+      });
 
       // Calculate unread count (INBOUND messages that are unread)
       const unreadCount = await prisma.communicationLog.count({
@@ -140,7 +159,7 @@ exports.getConversations = async (req, res) => {
         leadId: lead ? lead.id : (client ? client.leadId : null),
         clientId: client ? client.id : null,
         messages: messages,
-        latestMessage: latestLog.content,
+        latestMessage: parseMessageContent(latestLog.content).text,
         timestamp: latestLog.createdAt
       });
     }
@@ -182,18 +201,22 @@ exports.getMessagesByPhone = async (req, res) => {
     });
 
     // 3. Map to frontend message format
-    const messages = logs.map(log => ({
-      id: log.id,
-      sender: log.direction === 'INBOUND' ? 'customer' : (log.direction === 'SYSTEM' ? 'system' : 'agent'),
-      text: log.content,
-      timestamp: log.createdAt,
-      respondedBy: log.respondedByUser ? {
-        id: log.respondedByUser.id,
-        name: log.respondedByUser.fullName,
-        role: log.respondedByUser.role,
-        avatar: log.respondedByUser.avatar
-      } : (log.direction === 'OUTBOUND' ? { name: log.name || 'Agent' } : null)
-    }));
+    const messages = logs.map(log => {
+      const parsed = parseMessageContent(log.content);
+      return {
+        id: log.id,
+        sender: log.direction === 'INBOUND' ? 'customer' : (log.direction === 'SYSTEM' ? 'system' : 'agent'),
+        text: parsed.text,
+        mediaUrl: parsed.mediaUrl,
+        timestamp: log.createdAt,
+        respondedBy: log.respondedByUser ? {
+          id: log.respondedByUser.id,
+          name: log.respondedByUser.fullName,
+          role: log.respondedByUser.role,
+          avatar: log.respondedByUser.avatar
+        } : (log.direction === 'OUTBOUND' ? { name: log.name || 'Agent' } : null)
+      };
+    });
 
     return res.status(200).json(messages);
   } catch (error) {
@@ -207,15 +230,21 @@ exports.getMessagesByPhone = async (req, res) => {
  */
 exports.sendSocialMessage = async (req, res) => {
   try {
-    const { phone, text } = req.body;
-    if (!phone || !text) {
-      return res.status(400).json({ message: 'Phone and text are required' });
+    const { phone, text, mediaUrl } = req.body;
+    if (!phone) {
+      return res.status(400).json({ message: 'Phone is required' });
+    }
+    
+    // If there is a mediaUrl but no text, allow it (WhatsApp allows media-only)
+    if (!text && !mediaUrl) {
+      return res.status(400).json({ message: 'Text or media is required' });
     }
 
     const cleanPh = cleanPhoneNumber(phone);
     const twilioTo = `whatsapp:${cleanPh}`;
 
-    console.log(`Sending manual WhatsApp message to ${twilioTo}: ${text}`);
+    const displayContent = `${text || ''}${mediaUrl ? `\n[FILE: ${mediaUrl}]` : ''}`.trim();
+    console.log(`Sending manual WhatsApp message to ${twilioTo}: ${displayContent}`);
 
     let deliveryStatus = 'SENT';
     let failureReason = null;
@@ -225,9 +254,10 @@ exports.sendSocialMessage = async (req, res) => {
       try {
         const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
         await client.messages.create({
-          body: text,
+          body: text || ' ',
           from: TWILIO_WHATSAPP_FROM,
-          to: twilioTo
+          to: twilioTo,
+          ...(mediaUrl && { mediaUrl: [mediaUrl] })
         });
       } catch (err) {
         console.error('Twilio manual send failed:', err.message);
@@ -258,7 +288,7 @@ exports.sendSocialMessage = async (req, res) => {
         respondedByUserId: staffUserId,
         channel: 'WHATSAPP',
         direction: 'OUTBOUND',
-        content: text,
+        content: displayContent,
         deliveryStatus: deliveryStatus,
         failureReason: failureReason
       },
@@ -295,7 +325,8 @@ exports.sendSocialMessage = async (req, res) => {
       log: {
         id: log.id,
         sender: 'agent',
-        text: log.content,
+        text: parseMessageContent(log.content).text,
+        mediaUrl: parseMessageContent(log.content).mediaUrl,
         timestamp: log.createdAt,
         respondedBy: respondedByObj
       }
@@ -303,5 +334,82 @@ exports.sendSocialMessage = async (req, res) => {
   } catch (error) {
     console.error('Error sending social message:', error.message);
     return res.status(500).json({ message: 'Internal Server Error', error: error.message });
+  }
+};
+
+/**
+ * Handle direct file upload for social messages
+ */
+exports.uploadMedia = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'No file uploaded' });
+    }
+    
+    // Support both AWS S3 (location) and local storage (filename)
+    let mediaUrl;
+    if (req.file.location) {
+      mediaUrl = req.file.location;
+    } else {
+      const baseUrl = process.env.VITE_API_URL 
+        ? process.env.VITE_API_URL.replace('/api/v1', '') 
+        : 'http://localhost:5000';
+      mediaUrl = `${baseUrl}/uploads/${req.file.filename}`;
+    }
+
+    return res.status(200).json({
+      success: true,
+      mediaUrl
+    });
+  } catch (error) {
+    console.error('Error uploading social media:', error.message);
+    return res.status(500).json({ message: 'Upload failed', error: error.message });
+  }
+};
+
+/**
+ * Proxy Twilio Media URLs to handle HTTP Basic Auth
+ */
+exports.proxyTwilioMedia = async (req, res) => {
+  try {
+    const { url } = req.query;
+    if (!url || !url.includes('api.twilio.com')) {
+      return res.status(400).send('Invalid media URL');
+    }
+
+    const axios = require('axios');
+    let targetUrl = url;
+
+    // 1. Fetch the media URL without following redirects to get the S3 link
+    try {
+      await axios({
+        url: targetUrl,
+        method: 'GET',
+        maxRedirects: 0,
+        auth: {
+          username: TWILIO_ACCOUNT_SID,
+          password: TWILIO_AUTH_TOKEN
+        }
+      });
+    } catch (err) {
+      if (err.response && [301, 302, 303, 307].includes(err.response.status)) {
+        targetUrl = err.response.headers.location;
+      } else {
+        throw err;
+      }
+    }
+
+    // 2. Fetch the actual media from the S3 link (without Auth headers)
+    const response = await axios({
+      url: targetUrl,
+      method: 'GET',
+      responseType: 'stream'
+    });
+
+    res.set('Content-Type', response.headers['content-type']);
+    response.data.pipe(res);
+  } catch (error) {
+    console.error('Twilio media proxy error:', error.message);
+    res.status(500).send('Failed to fetch media');
   }
 };

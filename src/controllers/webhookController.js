@@ -584,6 +584,10 @@ exports.handleTwilioWebhook = async (req, res) => {
     const message = payload.Body || '';
     const name = payload.ProfileName || ''; // Twilio ProfileName if available
     const messageId = payload.MessageSid;
+    
+    // Extract media if present
+    const numMedia = parseInt(payload.NumMedia || '0', 10);
+    const mediaUrl = numMedia > 0 ? payload.MediaUrl0 : null;
 
     // Deduplicate incoming Twilio messages
     if (messageId && await isDuplicateMessage(messageId)) {
@@ -599,6 +603,7 @@ exports.handleTwilioWebhook = async (req, res) => {
           phone: phone,
           name: (name && name !== 'Applicant') ? name : phone,
           text: message,
+          mediaUrl: mediaUrl,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         });
       }
@@ -606,7 +611,7 @@ exports.handleTwilioWebhook = async (req, res) => {
       if (process.env.DISABLE_REDIS === 'true') {
         console.log(`[LOCAL DEV] Redis disabled. Processing chatbot message synchronously.`);
         const chatbotService = require('../services/chatbotService');
-        chatbotService.handleChatbotMessage(phone, name || 'Applicant', message || '', messageId).catch(err => {
+        chatbotService.handleChatbotMessage(phone, name || 'Applicant', message || '', messageId, mediaUrl).catch(err => {
           console.error('[LOCAL DEV] Chatbot processing error:', err.message);
         });
       } else {
@@ -616,6 +621,7 @@ exports.handleTwilioWebhook = async (req, res) => {
           name,
           message,
           messageId,
+          mediaUrl,
           rawPayload: payload
         }, {
           jobId: messageId || `twilio-msg-${Date.now()}`

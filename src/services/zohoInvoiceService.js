@@ -175,7 +175,7 @@ const createZohoInvoice = async ({ client, amount, discount, netAmount, serviceT
       terms: 'Payment is due upon receipt.'
     };
 
-    const response = await axios.post(`${apiUrl}/invoices?organization_id=${orgId}`, invoicePayload, {
+    const response = await axios.post(`${apiUrl}/invoices?organization_id=${orgId}&send=true`, invoicePayload, {
       headers: {
         Authorization: `Zoho-oauthtoken ${token}`,
         'X-com-zoho-invoice-organizationid': orgId,
@@ -185,7 +185,21 @@ const createZohoInvoice = async ({ client, amount, discount, netAmount, serviceT
 
     if (response.data?.invoice) {
       const inv = response.data.invoice;
-      // Zoho payment URL or customer portal invoice link
+
+      // Mark invoice as SENT in Zoho so the public payment link is instantly active and openable by client
+      try {
+        await axios.post(`${apiUrl}/invoices/${inv.invoice_id}/status/sent?organization_id=${orgId}`, {}, {
+          headers: {
+            Authorization: `Zoho-oauthtoken ${token}`,
+            'X-com-zoho-invoice-organizationid': orgId
+          }
+        });
+        console.log(`[Zoho Invoice Service] Marked Zoho Invoice ${inv.invoice_number} as SENT.`);
+      } catch (sentErr) {
+        console.warn('[Zoho Invoice Status Sent Warning]:', sentErr.response?.data || sentErr.message);
+      }
+
+      // Zoho public payment URL
       const invoiceUrl = inv.invoice_url || inv.payment_options?.payment_gateways?.[0]?.payment_url || `${apiUrl}/invoices/${inv.invoice_id}`;
       
       console.log(`[Zoho Invoice Service] Created Zoho Invoice ${inv.invoice_number} (ID: ${inv.invoice_id}). URL: ${invoiceUrl}`);

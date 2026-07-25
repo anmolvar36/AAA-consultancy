@@ -116,6 +116,11 @@ const generatePaymentLink = async (req, res) => {
         if (tabbyRes.data?.configuration?.available_products?.installments?.[0]?.web_url) {
           paymentUrl = tabbyRes.data.configuration.available_products.installments[0].web_url;
         }
+      } catch (tabbyErr) {
+        console.warn('[Tabby Session Engine] Could not create Tabby session:', tabbyErr.message);
+      }
+    }
+
     // 3. Zoho Invoice Generator
     if (gateway === 'zoho' || !gateway || gateway === 'stripe') {
       try {

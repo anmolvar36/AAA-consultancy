@@ -1,7 +1,7 @@
 const prisma = require('../config/db');
 const zoomService = require('../services/zoomService');
 const { sendEmail } = require('../services/emailService');
-const { sendWhatsAppMessage } = require('../services/whatsappService');
+const { sendWhatsAppMessage, sendGoogleReviewRequestWhatsApp } = require('../services/whatsappService');
 const { remindersQueue } = require('../queues/queueSetup');
 
 const getConsultations = async (req, res) => {
@@ -218,6 +218,38 @@ const updateOutcome = async (req, res) => {
           console.log(`[Auto-Completed] Scheduled €250 assessment drips for lead ${updatedLead.id}`);
         }
       }
+    }
+
+    // Trigger automated post-consultation Google Review WhatsApp message (deduplicated & non-blocking)
+    if (status === 'Completed') {
+      (async () => {
+        try {
+          let targetPhone = null;
+          let targetName = null;
+          let targetClientId = null;
+
+          if (consultation.leadId) {
+            const lead = await prisma.lead.findUnique({
+              where: { id: consultation.leadId },
+              select: { phone: true, firstName: true, lastName: true, clientId: true }
+            });
+            if (lead) {
+              targetPhone = lead.phone;
+              targetName = `${lead.firstName} ${lead.lastName}`.trim();
+              targetClientId = lead.clientId;
+            }
+          }
+
+          await sendGoogleReviewRequestWhatsApp({
+            phone: targetPhone,
+            clientName: targetName,
+            clientId: targetClientId,
+            leadId: consultation.leadId
+          });
+        } catch (gReviewErr) {
+          console.error('[Google Review Trigger] Error triggering review request:', gReviewErr.message);
+        }
+      })();
     }
 
     // Auto-update associated lead status if No Show

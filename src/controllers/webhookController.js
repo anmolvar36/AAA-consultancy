@@ -5,6 +5,7 @@ const axios = require('axios');
 const prisma = require('../config/db');
 const s3Service = require('../services/s3Service');
 const zoomService = require('../services/zoomService');
+const { sendGoogleReviewRequestWhatsApp } = require('../services/whatsappService');
 const { communicationsQueue } = require('../queues/queueSetup');
 const { processPaymentEvent } = require('../services/paymentService');
 
@@ -464,6 +465,16 @@ async function processZoomRecording(payload) {
         });
         console.log(`[processZoomRecording] Successfully linked recording link to Lead ${lead.id} notes and communication logs.`);
       }
+
+      // 5. Trigger automated post-consultation Google Review WhatsApp message (deduplicated & non-blocking)
+      sendGoogleReviewRequestWhatsApp({
+        phone: consultation.lead?.phone,
+        clientName: consultation.lead ? `${consultation.lead.firstName} ${consultation.lead.lastName}`.trim() : 'Client',
+        clientId: consultation.lead?.clientId,
+        leadId: consultation.leadId
+      }).catch(gErr => {
+        console.error('[processZoomRecording] Error triggering Google Review WhatsApp:', gErr.message);
+      });
     } else {
       console.warn(`No Consultation record found matching Zoom Meeting ID ${meetingId}`);
     }

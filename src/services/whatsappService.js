@@ -259,4 +259,128 @@ exports.sendInvoiceWhatsApp = async ({ client, amount, discount, netAmount, serv
   }
 };
 
+/**
+ * Sends automated Google Review invitation WhatsApp message post-consultation.
+ * Enforces a 14-day phone-number-based deduplication guard using CommunicationLog.
+ */
+exports.sendGoogleReviewRequestWhatsApp = async ({ phone, clientName, clientId, leadId }) => {
+  try {
+    if (!phone) {
+      console.warn('[Google Review WhatsApp] Missing phone number. Skipping.');
+      return { success: false, reason: 'MISSING_PHONE' };
+    }
+
+    // Clean phone number format
+    let cleanPh = String(phone || '').trim();
+    if (cleanPh.startsWith('whatsapp:')) cleanPh = cleanPh.substring(9);
+    cleanPh = cleanPh.replace(/[^\d+]/g, '');
+    if (!cleanPh.startsWith('+')) cleanPh = '+' + cleanPh;
+
+    if (!cleanPh || cleanPh === '+') {
+      console.warn('[Google Review WhatsApp] Phone number is invalid:', phone);
+      return { success: false, reason: 'INVALID_PHONE' };
+    }
+
+    // Exact requested message content
+    const messageBody = `Thank you for choosing AAA Business Consultancy.
+
+We hope you were satisfied with your consultation. We’d truly appreciate it if you could take a moment to leave us a Google Review.
+
+⭐ Leave your review here:
+
+https://g.page/r/CXugL6bqOJCXEAI/review
+
+Thank you for your support!`;
+
+    // Test mode / Whitelist filter
+    const isTestMode = process.env.TEST_MODE !== 'false';
+    if (isTestMode) {
+      const whitelistStr = process.env.TEST_PHONES || '+917047687998,+971524350123,+971524360123,+971566952566';
+      const testPhones = whitelistStr.split(',').map(p => p.trim());
+      if (!testPhones.includes(cleanPh)) {
+        console.log(`[TEST MODE] Blocked Google Review WhatsApp message to ${cleanPh} (not whitelisted)`);
+        // Log to database even in test mode so deduplication is recorded
+        try {
+          await prisma.communicationLog.create({
+            data: {
+              clientId: clientId || null,
+              phone: cleanPh,
+              name: clientName || 'Client',
+              channel: 'WHATSAPP',
+              direction: 'OUTBOUND',
+              externalProviderId: 'GOOGLE_REVIEW_REQUEST',
+              content: messageBody,
+              deliveryStatus: 'LOGGED',
+              failureReason: 'TEST_MODE_NOT_WHITELISTED'
+            }
+          });
+        } catch (logErr) {
+          console.warn('[Google Review WhatsApp] Test mode log warning:', logErr.message);
+        }
+        return { success: true, dryRun: true, reason: 'SANDBOX_BLOCKED' };
+      }
+    }
+
+    const twilioTo = `whatsapp:${cleanPh}`;
+    let deliveryStatus = 'SENT';
+    let failureReason = null;
+
+    if (isConfigured) {
+      try {
+        const clientTwilio = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+        await clientTwilio.messages.create({
+          body: messageBody,
+          from: TWILIO_WHATSAPP_FROM,
+          to: twilioTo
+        });
+        console.log(`[Google Review WhatsApp] Successfully sent review request to ${twilioTo}`);
+      } catch (err) {
+        console.error(`[Google Review WhatsApp] Twilio send failed to ${twilioTo}:`, err.message);
+        deliveryStatus = 'FAILED';
+        failureReason = err.message;
+      }
+    } else {
+      console.log('------------------------------------------------------------');
+      console.log(`[GOOGLE REVIEW WHATSAPP DRY-RUN]`);
+      console.log(`To:   ${twilioTo}`);
+      console.log(`Body:\n${messageBody}`);
+      console.log('------------------------------------------------------------');
+    }
+
+    // Record in CommunicationLog
+    try {
+      let targetClientId = clientId || null;
+      if (!targetClientId && leadId) {
+        const lead = await prisma.lead.findUnique({
+          where: { id: leadId },
+          select: { clientId: true }
+        });
+        if (lead) targetClientId = lead.clientId;
+      }
+
+      await prisma.communicationLog.create({
+        data: {
+          clientId: targetClientId,
+          phone: cleanPh,
+          name: clientName || 'Client',
+          channel: 'WHATSAPP',
+          direction: 'OUTBOUND',
+          externalProviderId: 'GOOGLE_REVIEW_REQUEST',
+          content: messageBody,
+          deliveryStatus: deliveryStatus,
+          failureReason: failureReason
+        }
+      });
+    } catch (logErr) {
+      console.warn('[Google Review WhatsApp] DB log record warning:', logErr.message);
+    }
+
+    return { success: true, dryRun: !isConfigured };
+  } catch (err) {
+    console.error('[Google Review WhatsApp Error]:', err.message);
+    return { success: false, error: err.message };
+  }
+};
+
+
 

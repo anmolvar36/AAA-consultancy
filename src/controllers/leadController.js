@@ -97,20 +97,20 @@ const createLead = async (req, res) => {
       });
     }
     
-    // 3. Check for Duplicate Active Bookings (Status-aware)
-    const activeLead = await prisma.lead.findFirst({
+    // 3. Check for Duplicate Active Bookings (Status-aware based on Most Recent Lead)
+    const latestLead = await prisma.lead.findFirst({
       where: {
         OR: [
           { email: email.toLowerCase() },
           ...(matchDigits ? [{ phone: { contains: matchDigits } }] : [])
-        ],
-        status: {
-          notIn: ['Lost Lead', 'Spam', 'Cold Lead', 'No Show', 'Completed', 'Cancelled', 'Canceled', 'Refused']
-        }
-      }
+        ]
+      },
+      orderBy: { createdAt: 'desc' }
     });
 
-    if (activeLead) {
+    const inactiveStatuses = ['Lost Lead', 'Spam', 'Cold Lead', 'No Show', 'Completed', 'Cancelled', 'Canceled', 'Refused'];
+    
+    if (latestLead && !inactiveStatuses.includes(latestLead.status)) {
       return res.status(409).json({
         code: 'DUPLICATE_LEAD',
         message: 'You already have an active booking or application under this email/phone.'

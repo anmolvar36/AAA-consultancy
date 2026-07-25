@@ -32,11 +32,7 @@ const parseMessageContent = (content) => {
   if (!content) return { text: '', mediaUrl: null };
   const fileMatch = content.match(/\[FILE:\s*(.+?)\]/);
   if (fileMatch) {
-    let mediaUrl = fileMatch[1];
-    if (mediaUrl.includes('api.twilio.com')) {
-      const baseUrl = process.env.VITE_API_URL ? process.env.VITE_API_URL.replace('/api/v1', '') : 'http://localhost:5000';
-      mediaUrl = `${baseUrl}/api/v1/social/media-proxy?url=${encodeURIComponent(mediaUrl)}`;
-    }
+    const mediaUrl = fileMatch[1];
     const text = content.replace(/\[FILE:\s*(.+?)\]/, '').trim();
     return { text, mediaUrl };
   }
@@ -380,6 +376,9 @@ exports.proxyTwilioMedia = async (req, res) => {
     const axios = require('axios');
     let targetUrl = url;
 
+    console.log(`[Twilio Proxy] Fetching ${targetUrl}`);
+    console.log(`[Twilio Proxy] SID defined: ${!!TWILIO_ACCOUNT_SID}`);
+
     // 1. Fetch the media URL without following redirects to get the S3 link
     try {
       await axios({
@@ -410,6 +409,8 @@ exports.proxyTwilioMedia = async (req, res) => {
     response.data.pipe(res);
   } catch (error) {
     console.error('Twilio media proxy error:', error.message);
-    res.status(500).send('Failed to fetch media');
+    const status = error.response ? error.response.status : 500;
+    const data = error.response && error.response.data ? error.response.data : error.message;
+    res.status(status).send(`Failed to fetch media: ${error.message} - ${JSON.stringify(data)}`);
   }
 };

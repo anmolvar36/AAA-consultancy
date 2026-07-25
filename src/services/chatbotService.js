@@ -12,7 +12,7 @@ const SESSION_TIMEOUT = 3600; // 1 hour session validity
  * @param {string} name - Inbound sender name
  * @param {string} text - Message text content
  */
-exports.handleChatbotMessage = async (phone, name, text, messageId = null) => {
+exports.handleChatbotMessage = async (phone, name, text, messageId = null, mediaUrl = null) => {
   // Normalize phone format
   let cleanPhone = phone.trim();
   if (cleanPhone.startsWith('whatsapp:')) {
@@ -23,8 +23,11 @@ exports.handleChatbotMessage = async (phone, name, text, messageId = null) => {
     cleanPhone = '+' + cleanPhone;
   }
 
+  // Format message text with mediaUrl if present
+  const displayContent = `${text || ''}${mediaUrl ? `\n[FILE: ${mediaUrl}]` : ''}`.trim();
+
   // Log incoming message to Database
-  await logCommunication(cleanPhone, text, "INBOUND", name, messageId);
+  await logCommunication(cleanPhone, displayContent, "INBOUND", name, messageId);
 
   // 1. Check if Live Agent Mode is active for this user
   const agentModeKey = `chatbot:agent_mode:${cleanPhone}`;

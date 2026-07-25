@@ -50,7 +50,7 @@ const setupWorkers = () => {
         } else if (job.name === 'process-meta-message' || job.name === 'process-twilio-message') {
           // Process inbound user message via the Chatbot
           const chatbotService = require('../services/chatbotService');
-          await chatbotService.handleChatbotMessage(phone, name || 'Applicant', message || '', messageId);
+          await chatbotService.handleChatbotMessage(job.data.phone, job.data.name || 'Applicant', job.data.message || '', job.data.messageId, job.data.mediaUrl);
         } else {
           // For process-tiktok-lead (external lead form submission)
           if (phone) {

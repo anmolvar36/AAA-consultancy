@@ -213,11 +213,64 @@ const createClient = async (req, res) => {
         html: renderedHtml
       }).catch(err => console.error('Failed to send auto welcome email:', err));
 
-      // Dispatch Invoice & Payment Link notifications (Email + WhatsApp) with portal credentials
+      // Dispatch Invoice & Payment Link notifications (Email + WhatsApp) with portal credentials & direct Stripe Checkout URL
       try {
         const { sendInvoiceNotificationEmail } = require('../services/emailService');
         const { sendInvoiceWhatsApp } = require('../services/whatsappService');
         const clientFullName = `${client.firstName} ${client.lastName}`.trim();
+
+        // 1. Create Pending Payment record & generate direct Stripe Checkout URL if available
+        let directCheckoutUrl = null;
+        const stripe = process.env.STRIPE_SECRET_KEY && !process.env.STRIPE_SECRET_KEY.includes('your_stripe') 
+          ? require('stripe')(process.env.STRIPE_SECRET_KEY) 
+          : null;
+
+        try {
+          const initPayment = await prisma.payment.create({
+            data: {
+              clientId: client.id,
+              amount: 2000,
+              discount: 0,
+              status: 'Pending',
+              paymentMethod: 'STRIPE',
+              dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
+            }
+          });
+
+          if (stripe) {
+            const session = await stripe.checkout.sessions.create({
+              payment_method_types: ['card'],
+              line_items: [{
+                price_data: {
+                  currency: 'eur',
+                  product_data: {
+                    name: 'Spain Relocation Legal & Consulting Package',
+                    description: `Payment for client ID: ${client.id}`
+                  },
+                  unit_amount: 200000 // €2,000 in cents
+                },
+                quantity: 1
+              }],
+              mode: 'payment',
+              success_url: `${frontendUrl}/#/portal/login?payment=success&id=${initPayment.id}&session_id={CHECKOUT_SESSION_ID}`,
+              cancel_url: `${frontendUrl}/#/portal/documents/${client.id}?cancelled=true`,
+              client_reference_id: initPayment.id,
+              metadata: { paymentId: initPayment.id, clientId: client.id }
+            });
+
+            if (session && session.url) {
+              directCheckoutUrl = session.url;
+              await prisma.payment.update({
+                where: { id: initPayment.id },
+                data: { gatewayId: session.id }
+              });
+            }
+          }
+        } catch (stripeErr) {
+          console.warn('[Client Init Stripe Session Engine Warning]:', stripeErr.message);
+        }
+
+        const finalCheckoutUrl = directCheckoutUrl || portalUrl;
 
         sendInvoiceNotificationEmail({
           to: client.email,
@@ -226,6 +279,7 @@ const createClient = async (req, res) => {
           discount: 0,
           netAmount: 2000,
           serviceType: client.serviceType,
+          checkoutUrl: finalCheckoutUrl,
           portalUrl,
           tempPassword: plainPassword
         }).catch(err => console.error('[Client Init Invoice Email Error]:', err.message));
@@ -237,6 +291,7 @@ const createClient = async (req, res) => {
             discount: 0,
             netAmount: 2000,
             serviceType: client.serviceType,
+            checkoutUrl: finalCheckoutUrl,
             portalUrl,
             tempPassword: plainPassword
           }).catch(err => console.error('[Client Init Invoice WA Error]:', err.message));

@@ -244,6 +244,33 @@ exports.sendInvoiceWhatsApp = async ({ client, amount, discount, netAmount, serv
       return;
     }
 
+    let cleanPh = String(client.phone || '').trim();
+    if (cleanPh.startsWith('whatsapp:')) cleanPh = cleanPh.substring(9);
+    cleanPh = cleanPh.replace(/[^\d+]/g, '');
+    if (!cleanPh.startsWith('+')) cleanPh = '+' + cleanPh;
+
+    const digitsOnly = cleanPh.replace(/[^\d]/g, '');
+    const searchDigits = digitsOnly.length > 8 ? digitsOnly.slice(-8) : digitsOnly;
+
+    // Deduplication guard: Suppress sending duplicate invoice WhatsApp within 60 seconds
+    try {
+      const oneMinuteAgo = new Date(Date.now() - 60 * 1000);
+      const recentLog = await prisma.communicationLog.findFirst({
+        where: {
+          phone: { contains: searchDigits },
+          createdAt: { gte: oneMinuteAgo },
+          content: { contains: 'welcome to AAA Business Consultancy' }
+        }
+      });
+
+      if (recentLog) {
+        console.log(`[Invoice WhatsApp] Suppressed duplicate invoice notification for ${cleanPh} (already sent in last 60s).`);
+        return;
+      }
+    } catch (dedupErr) {
+      console.warn('[Invoice WhatsApp] Deduplication check warning:', dedupErr.message);
+    }
+
     const { sendCustomWhatsApp } = require('./chatbotService');
     const loginUrl = portalUrl || `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/portal/login`;
     const paymentLink = checkoutUrl || loginUrl;
@@ -253,7 +280,7 @@ exports.sendInvoiceWhatsApp = async ({ client, amount, discount, netAmount, serv
     const message = `Hello *${clientName}*, welcome to AAA Business Consultancy! 🇪🇸\n\nYour Spain Relocation profile has been initialized.\n\n💳 *Invoice Amount:* €${finalPrice.toLocaleString()}\n📌 *Service:* ${serviceType || 'Spain Relocation Legal Package'}\n\n1️⃣ *Pay Invoice (1-Click Stripe Checkout):*\n🔗 ${paymentLink}\n\n2️⃣ *Client Portal Login Credentials:*\n🔗 ${loginUrl}\n👤 *Username:* ${client.email}\n🔑 *Temp Password:* ${tempPassword || 'Set on Portal'}\n\nThank you for choosing AAA Business Consultancy!`;
 
     await sendCustomWhatsApp(client.phone, message);
-    console.log(`[Invoice WhatsApp] Dispatched invoice notification to ${client.phone}`);
+    console.log(`[Invoice WhatsApp] Dispatched single invoice notification to ${client.phone}`);
   } catch (err) {
     console.error('[Invoice WhatsApp] Error dispatching WhatsApp notification:', err.message);
   }

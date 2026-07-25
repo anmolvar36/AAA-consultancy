@@ -6,7 +6,7 @@ const prisma = require('../config/db');
 const s3Service = require('../services/s3Service');
 const zoomService = require('../services/zoomService');
 const { sendGoogleReviewRequestWhatsApp } = require('../services/whatsappService');
-const { communicationsQueue } = require('../queues/queueSetup');
+const { communicationsQueue, remindersQueue } = require('../queues/queueSetup');
 const { processPaymentEvent } = require('../services/paymentService');
 
 const processedMessages = new Set();
@@ -471,15 +471,46 @@ async function processZoomRecording(requestBody) {
         console.log(`[processZoomRecording] Successfully linked recording link to Lead ${lead.id} notes and communication logs.`);
       }
 
-      // 5. Trigger automated post-consultation Google Review WhatsApp message (deduplicated & non-blocking)
-      sendGoogleReviewRequestWhatsApp({
-        phone: consultation.lead?.phone,
-        clientName: consultation.lead ? `${consultation.lead.firstName} ${consultation.lead.lastName}`.trim() : 'Client',
-        clientId: consultation.lead?.clientId,
-        leadId: consultation.leadId
-      }).catch(gErr => {
-        console.error('[processZoomRecording] Error triggering Google Review WhatsApp:', gErr.message);
-      });
+      // 5. Trigger automated post-consultation Google Review WhatsApp message (Immediate + 3d + 7d drips)
+      (async () => {
+        try {
+          const targetPhone = consultation.lead?.phone;
+          const targetName = consultation.lead ? `${consultation.lead.firstName} ${consultation.lead.lastName}`.trim() : 'Client';
+          const targetClientId = consultation.lead?.clientId;
+
+          await sendGoogleReviewRequestWhatsApp({
+            phone: targetPhone,
+            clientName: targetName,
+            clientId: targetClientId,
+            leadId: consultation.leadId
+          });
+
+          if (remindersQueue && remindersQueue.add) {
+            await remindersQueue.add('google-review-request-drip', {
+              leadId: consultation.leadId,
+              clientId: targetClientId,
+              phone: targetPhone,
+              clientName: targetName,
+              dripIndex: 2
+            }, {
+              delay: 3 * 24 * 60 * 60 * 1000 // 3 days
+            });
+
+            await remindersQueue.add('google-review-request-drip', {
+              leadId: consultation.leadId,
+              clientId: targetClientId,
+              phone: targetPhone,
+              clientName: targetName,
+              dripIndex: 3
+            }, {
+              delay: 7 * 24 * 60 * 60 * 1000 // 7 days
+            });
+            console.log(`[Zoom Recording Complete] Scheduled 3-day and 7-day Google Review drips for lead ${consultation.leadId}`);
+          }
+        } catch (gErr) {
+          console.error('[processZoomRecording] Error triggering Google Review WhatsApp sequence:', gErr.message);
+        }
+      })();
     } else {
       console.warn(`No Consultation record found matching Zoom Meeting ID ${meetingId}`);
     }

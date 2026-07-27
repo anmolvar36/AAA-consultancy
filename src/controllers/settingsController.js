@@ -285,8 +285,32 @@ const updateVisaServices = async (req, res) => {
   }
 };
 
+const deduplicatePackages = async () => {
+  try {
+    const all = await prisma.relocationPackage.findMany();
+    const seen = new Map();
+    for (const pkg of all) {
+      const key = (pkg.code && pkg.code.trim()) ? pkg.code.toLowerCase() : pkg.name.split(':')[0].trim().toUpperCase();
+      if (seen.has(key)) {
+        const prev = seen.get(key);
+        if (pkg.isRecommended && !prev.isRecommended) {
+          await prisma.relocationPackage.delete({ where: { id: prev.id } }).catch(() => null);
+          seen.set(key, pkg);
+        } else {
+          await prisma.relocationPackage.delete({ where: { id: pkg.id } }).catch(() => null);
+        }
+      } else {
+        seen.set(key, pkg);
+      }
+    }
+  } catch (e) {
+    console.error('Error deduplicating packages:', e);
+  }
+};
+
 const getPackages = async (req, res) => {
   try {
+    await deduplicatePackages();
     let packages = await prisma.relocationPackage.findMany();
     if (packages.length === 0) {
       const defaultPkgs = [
@@ -379,9 +403,13 @@ const updatePackages = async (req, res) => {
 
     for (const p of packagesArr) {
       if (p.isRecommended) {
-        await prisma.relocationPackage.updateMany({
-          data: { isRecommended: false }
-        });
+        try {
+          await prisma.relocationPackage.updateMany({
+            data: { isRecommended: false }
+          });
+        } catch (e) {
+          // Column might not exist in older DB schema
+        }
       }
 
       let existing = null;
@@ -398,48 +426,70 @@ const updatePackages = async (req, res) => {
         const isOptB = (p.code && (p.code.toLowerCase().includes('opt_b') || p.code.toLowerCase().includes('premium'))) || (p.name && p.name.toUpperCase().includes('OPTION B'));
         const isOptC = (p.code && (p.code.toLowerCase().includes('opt_c') || p.code.toLowerCase().includes('relocation'))) || (p.name && p.name.toUpperCase().includes('OPTION C'));
 
-        if (isOptA) {
+        try {
+          if (isOptA) {
+            existing = await prisma.relocationPackage.findFirst({
+              where: { OR: [{ code: 'full_process' }, { code: 'opt_a' }, { name: { contains: 'OPTION A' } }] }
+            });
+          } else if (isOptB) {
+            existing = await prisma.relocationPackage.findFirst({
+              where: { OR: [{ code: 'premium' }, { code: 'opt_b' }, { name: { contains: 'OPTION B' } }] }
+            });
+          } else if (isOptC) {
+            existing = await prisma.relocationPackage.findFirst({
+              where: { OR: [{ code: 'relocation' }, { code: 'opt_c' }, { name: { contains: 'OPTION C' } }] }
+            });
+          }
+        } catch (e) {
           existing = await prisma.relocationPackage.findFirst({
-            where: { OR: [{ code: 'full_process' }, { code: 'opt_a' }, { name: { contains: 'OPTION A' } }] }
-          });
-        } else if (isOptB) {
-          existing = await prisma.relocationPackage.findFirst({
-            where: { OR: [{ code: 'premium' }, { code: 'opt_b' }, { name: { contains: 'OPTION B' } }] }
-          });
-        } else if (isOptC) {
-          existing = await prisma.relocationPackage.findFirst({
-            where: { OR: [{ code: 'relocation' }, { code: 'opt_c' }, { name: { contains: 'OPTION C' } }] }
-          });
+            where: { name: { contains: p.name ? p.name.split(':')[0] : 'OPTION' } }
+          }).catch(() => null);
         }
       }
 
+      const dataToSave = {
+        name: p.name,
+        description: p.description || '',
+        price: Number(p.price) || 0,
+        includes: Array.isArray(p.includes) ? p.includes : []
+      };
+
+      if (p.code) dataToSave.code = p.code;
+      if (p.additionalApplicantPrice !== undefined) dataToSave.additionalApplicantPrice = Number(p.additionalApplicantPrice) || 500;
+      if (p.isRecommended !== undefined) dataToSave.isRecommended = !!p.isRecommended;
+
       if (existing) {
-        await prisma.relocationPackage.update({
-          where: { id: existing.id },
-          data: {
-            name: p.name,
-            description: p.description,
-            price: Number(p.price) || 0,
-            additionalApplicantPrice: Number(p.additionalApplicantPrice) || 500,
-            isRecommended: !!p.isRecommended,
-            includes: Array.isArray(p.includes) ? p.includes : []
-          }
-        });
+        try {
+          await prisma.relocationPackage.update({
+            where: { id: existing.id },
+            data: dataToSave
+          });
+        } catch (updateErr) {
+          delete dataToSave.code;
+          delete dataToSave.additionalApplicantPrice;
+          delete dataToSave.isRecommended;
+          await prisma.relocationPackage.update({
+            where: { id: existing.id },
+            data: dataToSave
+          });
+        }
       } else {
-        await prisma.relocationPackage.create({
-          data: {
-            code: p.code || p.id || `pkg_${Date.now()}`,
-            name: p.name,
-            description: p.description,
-            price: Number(p.price) || 0,
-            additionalApplicantPrice: Number(p.additionalApplicantPrice) || 500,
-            isRecommended: !!p.isRecommended,
-            includes: Array.isArray(p.includes) ? p.includes : []
-          }
-        });
+        try {
+          await prisma.relocationPackage.create({
+            data: dataToSave
+          });
+        } catch (createErr) {
+          delete dataToSave.code;
+          delete dataToSave.additionalApplicantPrice;
+          delete dataToSave.isRecommended;
+          await prisma.relocationPackage.create({
+            data: dataToSave
+          });
+        }
       }
     }
 
+    await deduplicatePackages();
     const allPkgs = await prisma.relocationPackage.findMany();
     res.json(allPkgs);
   } catch (error) {

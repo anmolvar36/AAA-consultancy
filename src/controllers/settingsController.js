@@ -117,7 +117,7 @@ const getCustomizationSettings = async (req, res) => {
 const updateCustomizationSettings = async (req, res) => {
   try {
     const { settings } = req.body;
-    
+
     // In a real database, you'd save this to a RolePermissions table.
     // Here we update the in-memory object for demonstration.
     if (settings) {
@@ -272,84 +272,10 @@ const updateVisaServices = async (req, res) => {
   }
 };
 
-const DEFAULT_RELOCATION_PACKAGES = [
-  {
-    code: 'option_a',
-    name: 'OPTION A: FULL PROCESSING PACKAGE',
-    description: 'Complete professional end-to-end support for Spain Residency applications from eligibility to submission.',
-    price: 3500,
-    additionalApplicantPrice: 500,
-    isRecommended: false,
-    includes: [
-      'Eligibility & Document Auditing',
-      'Official Sworn Translation Management',
-      'Digital Nomad / NLV File Assembly',
-      'Consulate Appointment Assistance',
-      'Post-Submission Status Tracking'
-    ]
-  },
-  {
-    code: 'option_b',
-    name: 'OPTION B: PREMIUM PACKAGE',
-    description: 'Everything in Full Process + complete relocation administrative assistance (NIE/TIE fingerprint appointments, empadronamiento local registration, Social Security, Spanish Bank setup).',
-    price: 4750,
-    additionalApplicantPrice: 750,
-    isRecommended: true,
-    includes: [
-      'Everything in Full Processing Package',
-      'Spanish Bank Account Opening Assistance',
-      'NIE / TIE Fingerprint Appointment Booking',
-      'Empadronamiento (Town Hall Registration)',
-      'Spanish Social Security Registration'
-    ]
-  },
-  {
-    code: 'option_c',
-    name: 'OPTION C: ADMINISTRATIVE RELOCATION PACKAGE',
-    description: 'Post-approval administrative relocation support for clients who already have their visa approved and need settlement help in Spain.',
-    price: 1750,
-    additionalApplicantPrice: 500,
-    isRecommended: false,
-    includes: [
-      'Post-Approval Residency Card (TIE) Processing',
-      'Town Hall Registration (Empadronamiento)',
-      'Spanish Health Card / Private Insurance Setup',
-      'Driver License Exchange Guidance'
-    ]
-  }
-];
-
 const getPackages = async (req, res) => {
   try {
-    let packages = await prisma.relocationPackage.findMany();
-    if (packages.length === 0) {
-      for (const pkg of DEFAULT_RELOCATION_PACKAGES) {
-        await prisma.relocationPackage.create({ data: pkg });
-      }
-      packages = await prisma.relocationPackage.findMany();
-    }
+    const packages = await prisma.relocationPackage.findMany();
     res.json(packages);
-  } catch (error) {
-    console.error('Error fetching packages:', error);
-    res.status(500).json({ error: error.message });
-  }
-};
-
-const createPackage = async (req, res) => {
-  try {
-    const { name, code, description, price, additionalApplicantPrice = 500, isRecommended = false, includes = [] } = req.body;
-    const newPkg = await prisma.relocationPackage.create({
-      data: {
-        name,
-        code: code || `pkg_${Date.now()}`,
-        description,
-        price: Number(price) || 0,
-        additionalApplicantPrice: Number(additionalApplicantPrice) || 500,
-        isRecommended: Boolean(isRecommended),
-        includes: Array.isArray(includes) ? includes : []
-      }
-    });
-    res.json(newPkg);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -357,33 +283,18 @@ const createPackage = async (req, res) => {
 
 const updatePackages = async (req, res) => {
   try {
-    const packages = Array.isArray(req.body) ? req.body : [req.body];
+    const packages = req.body;
     for (const p of packages) {
-      if (p.id && !String(p.id).startsWith('pkg_temp_')) {
+      if (p.id && !p.id.startsWith('pkg_')) {
         const exists = await prisma.relocationPackage.findUnique({ where: { id: p.id } });
         if (exists) {
           await prisma.relocationPackage.update({
             where: { id: p.id },
             data: {
               name: p.name,
-              code: p.code,
               description: p.description,
-              price: Number(p.price) || 0,
-              additionalApplicantPrice: Number(p.additionalApplicantPrice) || 500,
-              isRecommended: Boolean(p.isRecommended),
-              includes: Array.isArray(p.includes) ? p.includes : []
-            }
-          });
-        } else {
-          await prisma.relocationPackage.create({
-            data: {
-              name: p.name,
-              code: p.code || `pkg_${Date.now()}`,
-              description: p.description,
-              price: Number(p.price) || 0,
-              additionalApplicantPrice: Number(p.additionalApplicantPrice) || 500,
-              isRecommended: Boolean(p.isRecommended),
-              includes: Array.isArray(p.includes) ? p.includes : []
+              price: p.price,
+              includes: p.includes
             }
           });
         }
@@ -391,29 +302,15 @@ const updatePackages = async (req, res) => {
         await prisma.relocationPackage.create({
           data: {
             name: p.name,
-            code: p.code || `pkg_${Date.now()}`,
             description: p.description,
-            price: Number(p.price) || 0,
-            additionalApplicantPrice: Number(p.additionalApplicantPrice) || 500,
-            isRecommended: Boolean(p.isRecommended),
-            includes: Array.isArray(p.includes) ? p.includes : []
+            price: p.price,
+            includes: p.includes
           }
         });
       }
     }
     const allPkgs = await prisma.relocationPackage.findMany();
     res.json(allPkgs);
-  } catch (error) {
-    console.error('Error updating packages:', error);
-    res.status(500).json({ error: error.message });
-  }
-};
-
-const deletePackage = async (req, res) => {
-  try {
-    const { id } = req.params;
-    await prisma.relocationPackage.delete({ where: { id } });
-    res.json({ success: true, message: 'Package deleted successfully' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -496,8 +393,8 @@ const updateWhatsappTemplates = async (req, res) => {
   }
 };
 
-module.exports = { 
-  getCustomizationSettings, 
+module.exports = {
+  getCustomizationSettings,
   updateCustomizationSettings,
   getCustomization: () => DEFAULT_CUSTOMIZATION,
   getLeadStages,
@@ -507,9 +404,7 @@ module.exports = {
   getVisaServices,
   updateVisaServices,
   getPackages,
-  createPackage,
   updatePackages,
-  deletePackage,
   getEmailTemplates,
   updateEmailTemplates,
   getWhatsappTemplates,

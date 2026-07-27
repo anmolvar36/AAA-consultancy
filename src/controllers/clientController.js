@@ -22,12 +22,12 @@ const getClients = async (req, res) => {
         orderBy: { createdAt: 'desc' }
       });
     }
-    
+
     const totalClientsCount = clients.length;
     const mapped = clients.map((c, index) => {
       const autoCode = `CID ${12000 + (totalClientsCount - index)}`;
       const finalClientCode = c.clientCode || autoCode;
-      
+
       return {
         ...c,
         onboardingDate: c.createdAt,
@@ -43,7 +43,7 @@ const getClients = async (req, res) => {
         applicationCycles: c.applicationCycles || []
       };
     });
-    
+
     res.json(mapped);
   } catch (error) {
     console.error('Error fetching clients:', error);
@@ -53,13 +53,13 @@ const getClients = async (req, res) => {
 
 const createClient = async (req, res) => {
   try {
-    const { 
-      firstName, lastName, email, phone, nationality, 
-      serviceType, serviceId, assignedToId, assignedConsultantId, 
+    const {
+      firstName, lastName, email, phone, nationality,
+      serviceType, serviceId, assignedToId, assignedConsultantId,
       leadId, packageId, applicantsCount, status, profileSummary,
       dependentsDetails
     } = req.body;
-    
+
     // Frontend sometimes sends assignedConsultantId instead of assignedToId
     const finalAssignedTo = assignedToId || assignedConsultantId;
 
@@ -162,15 +162,15 @@ const createClient = async (req, res) => {
     if (credentialsGenerated && client.email) {
       const { sendEmail } = require('../services/emailService');
       const { getCustomization } = require('./settingsController');
-      
+
       const settings = getCustomization();
       const flowSettings = settings.flowAutomationSettings || {};
       const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
       const portalUrl = `${frontendUrl}/#/portal/login`;
-      
+
       const customSubject = flowSettings.welcomeEmailSubject || 'Welcome to AAA Business Consultancy - Your Client Portal is Ready! ✈️';
       let customHtml = flowSettings.welcomeEmailTemplate || '';
-      
+
       if (!customHtml) {
         customHtml = `
           <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; color: #2d3748;">
@@ -198,7 +198,7 @@ const createClient = async (req, res) => {
           </div>
         `;
       }
-      
+
       // Perform dynamic placeholders replacement
       const clientFullName = `${client.firstName} ${client.lastName}`;
       const renderedHtml = customHtml
@@ -207,7 +207,7 @@ const createClient = async (req, res) => {
         .replace(/{username}/g, client.email)
         .replace(/{temp_password}/g, plainPassword);
 
-       sendEmail({
+      sendEmail({
         to: client.email,
         subject: customSubject,
         html: renderedHtml
@@ -221,8 +221,8 @@ const createClient = async (req, res) => {
 
         // 1. Create Pending Payment record & generate direct Stripe Checkout URL if available
         let directCheckoutUrl = null;
-        const stripe = process.env.STRIPE_SECRET_KEY && !process.env.STRIPE_SECRET_KEY.includes('your_stripe') 
-          ? require('stripe')(process.env.STRIPE_SECRET_KEY) 
+        const stripe = process.env.STRIPE_SECRET_KEY && !process.env.STRIPE_SECRET_KEY.includes('your_stripe')
+          ? require('stripe')(process.env.STRIPE_SECRET_KEY)
           : null;
 
         try {
@@ -337,14 +337,14 @@ const updateClientStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status, visaStatus, nextFollowUpDate } = req.body;
-    
+
     const data = {};
     if (status) data.status = status;
     if (visaStatus) data.visaStatus = visaStatus;
     if (nextFollowUpDate !== undefined) {
       data.nextFollowUpDate = nextFollowUpDate ? new Date(nextFollowUpDate) : null;
     }
-    
+
     const client = await prisma.client.update({
       where: { id },
       data
@@ -398,7 +398,7 @@ const updateClientStatus = async (req, res) => {
         const { sendEmail } = require('../services/emailService');
         const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
         const portalUrl = `${frontendUrl}/#/portal/login`;
-        
+
         const subject = 'Your Sworn Translation is Completed! 🇪🇸';
         const html = `
           <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; color: #2d3748;">
@@ -421,7 +421,7 @@ const updateClientStatus = async (req, res) => {
             </p>
           </div>
         `;
-        
+
         sendEmail({
           to: client.email,
           subject,
@@ -440,10 +440,10 @@ const updateClientStatus = async (req, res) => {
           where: { clientId: id, status: 'Paid' }
         });
         const totalAmountPaid = payments.reduce((acc, p) => acc + (p.amount || 0), 0);
-        
+
         let refundAmount = 0;
         let isEligible = false;
-        
+
         const serviceLower = (client.serviceType || '').toLowerCase();
         if (serviceLower.includes('dnv') || serviceLower.includes('digital nomad') || serviceLower.includes('nlv') || serviceLower.includes('non-lucrative')) {
           refundAmount = parseFloat((totalAmountPaid * 0.5).toFixed(2));
@@ -454,7 +454,7 @@ const updateClientStatus = async (req, res) => {
         }
 
         console.log(`[Refund Automation] Visa Refused for client ${client.email}. Total paid: €${totalAmountPaid}. Refund calculated: €${refundAmount}.`);
-        
+
         await prisma.refundRequest.create({
           data: {
             clientId: id,
@@ -467,10 +467,36 @@ const updateClientStatus = async (req, res) => {
         console.error('Failed to auto-trigger refund request calculation:', err.message);
       }
     }
-    
+
     res.json(client);
   } catch (error) {
     res.status(500).json({ message: 'Server error updating client' });
+  }
+};
+
+const selectPackage = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { packageId, status, visaStatus } = req.body;
+
+    if (req.user.role === 'client' && req.user.id !== id) {
+      return res.status(403).json({ message: 'Access denied. You cannot select packages for other clients.' });
+    }
+
+    const client = await prisma.client.update({
+      where: { id },
+      data: {
+        packageId: packageId || undefined,
+        documentUploadAllowed: true,
+        status: status || 'Payment Received',
+        visaStatus: visaStatus || 'Document Preparation'
+      }
+    });
+
+    res.json({ success: true, client });
+  } catch (error) {
+    console.error('Error selecting package:', error);
+    res.status(500).json({ message: 'Server error selecting package' });
   }
 };
 
@@ -488,11 +514,11 @@ const generateCredentials = async (req, res) => {
     }
 
     if (client.password && forceReset !== 'true') {
-      return res.json({ 
-        success: true, 
-        alreadyExists: true, 
+      return res.json({
+        success: true,
+        alreadyExists: true,
         username: client.email,
-        message: 'Credentials already generated' 
+        message: 'Credentials already generated'
       });
     }
 
@@ -588,7 +614,7 @@ const clientLogin = async (req, res) => {
     if (client.password) {
       isMatch = await bcrypt.compare(password, client.password);
     }
-    
+
     // Fallback for Demo Quick Login testing if password is password123
     if (!isMatch && password === 'password123') {
       isMatch = true;
@@ -629,7 +655,7 @@ const changeClientPassword = async (req, res) => {
     if (req.user.role === 'client' && req.user.id !== id) {
       return res.status(403).json({ message: 'Access denied. You cannot change password for other clients.' });
     }
-    
+
     if (!newPassword || newPassword.length < 6) {
       return res.status(400).json({ message: 'Password must be at least 6 characters long' });
     }
@@ -764,27 +790,20 @@ const updateClient = async (req, res) => {
 
 const selectPackage = async (req, res) => {
   try {
-    const { packageId, serviceType, amount = 2000, clientId: bodyClientId } = req.body;
-    let clientId = req.params.id || bodyClientId || req.user?.id;
+    const clientId = req.params.id || req.user?.id;
+    const { packageId, serviceType, amount = 2000 } = req.body;
 
-    let client = null;
-    if (clientId) {
-      client = await prisma.client.findUnique({ where: { id: clientId } });
+    if (!clientId) {
+      return res.status(400).json({ message: 'Client ID is required.' });
     }
 
-    if (!client && req.user?.email) {
-      client = await prisma.client.findFirst({ where: { email: req.user.email } });
-    }
-
-    if (!client) {
-      client = await prisma.client.findFirst({ orderBy: { createdAt: 'desc' } });
-    }
+    const client = await prisma.client.findUnique({
+      where: { id: clientId }
+    });
 
     if (!client) {
       return res.status(404).json({ message: 'Client profile not found.' });
     }
-
-    clientId = client.id;
 
     const basePrice = Number(amount);
     const vatAmount = basePrice * 0.05;
@@ -841,14 +860,14 @@ const selectPackage = async (req, res) => {
   }
 };
 
-module.exports = { 
-  getClients, 
-  createClient, 
+module.exports = {
+  getClients,
+  createClient,
   updateClient,
-  updateClientStatus, 
-  selectPackage, 
-  generateCredentials, 
-  clientLogin, 
+  updateClientStatus,
+  selectPackage,
+  generateCredentials,
+  clientLogin,
   changeClientPassword,
   updateClientDependents,
   getClientProfile,

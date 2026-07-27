@@ -1,6 +1,6 @@
 const express = require('express');
-const { 
-  getCustomizationSettings, 
+const {
+  getCustomizationSettings,
   updateCustomizationSettings,
   getLeadStages,
   updateLeadStages,
@@ -9,9 +9,7 @@ const {
   getVisaServices,
   updateVisaServices,
   getPackages,
-  createPackage,
   updatePackages,
-  deletePackage,
   getEmailTemplates,
   updateEmailTemplates,
   getWhatsappTemplates,
@@ -26,24 +24,20 @@ router.route('/customization')
   .put(authMiddleware, updateCustomizationSettings);
 
 router.route('/lead-stages')
-  .get(getLeadStages)
+  .get(authMiddleware, getLeadStages)
   .put(authMiddleware, updateLeadStages);
 
 router.route('/company')
-  .get(getCompanySettings)
+  .get(authMiddleware, getCompanySettings)
   .put(authMiddleware, updateCompanySettings);
 
 router.route('/services')
-  .get(getVisaServices)
+  .get(authMiddleware, getVisaServices)
   .put(authMiddleware, updateVisaServices);
 
 router.route('/packages')
-  .get(getPackages)
-  .post(authMiddleware, createPackage)
+  .get(authMiddleware, getPackages)
   .put(authMiddleware, updatePackages);
-
-router.route('/packages/:id')
-  .delete(authMiddleware, deletePackage);
 
 router.route('/templates/email')
   .get(authMiddleware, getEmailTemplates)

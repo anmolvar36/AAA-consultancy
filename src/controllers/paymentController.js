@@ -1,6 +1,6 @@
 const prisma = require('../config/db');
-const stripe = process.env.STRIPE_SECRET_KEY && !process.env.STRIPE_SECRET_KEY.includes('your_stripe') 
-  ? require('stripe')(process.env.STRIPE_SECRET_KEY) 
+const stripe = process.env.STRIPE_SECRET_KEY && !process.env.STRIPE_SECRET_KEY.includes('your_stripe')
+  ? require('stripe')(process.env.STRIPE_SECRET_KEY)
   : null;
 
 const getPayments = async (req, res) => {
@@ -14,12 +14,12 @@ const getPayments = async (req, res) => {
       },
       orderBy: { createdAt: 'desc' }
     });
-    
+
     const mapped = payments.map(p => ({
       ...p,
       clientName: p.client ? `${p.client.firstName} ${p.client.lastName}` : 'Unknown'
     }));
-    
+
     res.json(mapped);
   } catch (error) {
     res.status(500).json({ message: 'Server error fetching payments' });
@@ -192,7 +192,7 @@ const updatePaymentStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status, paymentMethod, transactionId } = req.body;
-    
+
     const payment = await prisma.payment.findUnique({ where: { id } });
     if (!payment) {
       return res.status(404).json({ message: 'Payment not found' });
@@ -208,18 +208,18 @@ const updatePaymentStatus = async (req, res) => {
         snapshotRate = clientWithAgent.assignedTo.commissionRate || 0;
       }
     }
-    
+
     const updatedPayment = await prisma.payment.update({
       where: { id },
-      data: { 
-        status, 
-        paymentMethod, 
+      data: {
+        status,
+        paymentMethod,
         transactionId,
         totalPaid: status === 'Paid' ? (payment.amount - (payment.discount || 0)) : payment.totalPaid,
         commissionRate: status === 'Paid' ? snapshotRate : undefined
       }
     });
-    
+
     // Auto-trigger WhatsApp notification & client status update when payment is Paid
     if (status === 'Paid') {
       try {
@@ -239,7 +239,7 @@ const updatePaymentStatus = async (req, res) => {
             const amountPaid = payment.amount - (payment.discount || 0);
 
             sendCustomWhatsApp(clientObj.phone, `🎉 *Payment Received & Confirmed!*\n\nDear *${clientName}*,\n\nWe have successfully received your payment of *€${amountPaid.toLocaleString()}* for your Spain Relocation Package.\n\nYour Client Portal is now fully active for document uploads and progression tracking:\n🔗 ${portalLink}\n\nThank you for choosing AAA Business Consultancy!`).catch(err => console.error('[BG-WA] Payment receipt WA failed:', err.message));
-              console.log(`[Auto-WhatsApp Payment Receipt] Dispatched receipt to ${clientObj.phone}`);
+            console.log(`[Auto-WhatsApp Payment Receipt] Dispatched receipt to ${clientObj.phone}`);
           }
         }
       } catch (err) {
@@ -255,24 +255,24 @@ const updatePaymentStatus = async (req, res) => {
 const getRefundRequests = async (req, res) => {
   try {
     const refunds = await prisma.refundRequest.findMany({
-      include: { 
-        client: { 
-          select: { 
-            id: true, 
-            firstName: true, 
-            lastName: true, 
-            email: true, 
-            phone: true, 
+      include: {
+        client: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            phone: true,
             serviceType: true,
             payments: {
               where: { status: 'Paid' }
             }
-          } 
-        } 
+          }
+        }
       },
       orderBy: { createdAt: 'desc' }
     });
-    
+
     const mapped = refunds.map(r => {
       const clientPaidTotal = (r.client?.payments || []).reduce((sum, p) => sum + p.amount, 0);
       return {
@@ -297,7 +297,7 @@ const getRefundRequests = async (req, res) => {
         adminNotes: r.adminNotes || ''
       };
     });
-    
+
     res.json(mapped);
   } catch (error) {
     console.error('Error fetching refunds:', error);
@@ -315,7 +315,7 @@ const createRefundRequest = async (req, res) => {
     }
 
     let refundAmount = Number(amount) || 0;
-    
+
     if (category === 'Visa Rejection' || (category && category.includes('Visa Rejection'))) {
       const payments = await prisma.payment.findMany({
         where: { clientId: targetClientId, status: 'Paid' }
@@ -323,7 +323,7 @@ const createRefundRequest = async (req, res) => {
       const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
       refundAmount = totalPaid * 0.5; // Auto 50% refund
     }
-    
+
     const refund = await prisma.refundRequest.create({
       data: {
         clientId: targetClientId,
@@ -343,7 +343,7 @@ const createRefundRequest = async (req, res) => {
       const creatorRole = req.user?.role || 'client';
       const targetClient = await prisma.client.findUnique({ where: { id: targetClientId } });
       const clientName = targetClient ? `${targetClient.firstName} ${targetClient.lastName}` : 'Client';
-      
+
       await prisma.auditLog.create({
         data: {
           action: `Refund Request Created by ${creatorRole.toUpperCase()} (${creatorName})`,
@@ -354,7 +354,7 @@ const createRefundRequest = async (req, res) => {
     } catch (auditErr) {
       console.error('Failed to log refund creation audit:', auditErr.message);
     }
-    
+
     res.status(201).json(refund);
   } catch (error) {
     console.error('Error creating refund request:', error);
@@ -366,7 +366,7 @@ const updateRefundStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status, payoutMethod, transactionRef, adminNotes } = req.body;
-    
+
     const updateData = { status };
     if (payoutMethod) updateData.payoutMethod = payoutMethod;
     if (transactionRef) updateData.transactionRef = transactionRef;
@@ -446,7 +446,7 @@ const updateRefundStatus = async (req, res) => {
         html: receiptHtml
       }).catch(mailErr => console.error('[BG-Email] Refund receipt email failed:', mailErr.message));
     }
-    
+
     res.json(refund);
   } catch (error) {
     console.error('Error updating refund status:', error);
@@ -460,13 +460,13 @@ const getCommissionRates = async (req, res) => {
       where: { role: { in: ['admin', 'consultant', 'super_admin', 'operations', 'finance', 'marketing'] } },
       select: { id: true, commissionType: true, commissionRate: true }
     });
-    
+
     const rates = agents.map(a => ({
       agentId: a.id,
       type: a.commissionType || '10%',
       value: a.commissionRate || 10
     }));
-    
+
     res.json(rates);
   } catch (error) {
     res.status(500).json({ message: 'Server error fetching commission rates' });
@@ -476,7 +476,7 @@ const getCommissionRates = async (req, res) => {
 const updateCommissionRate = async (req, res) => {
   try {
     const { agentId, type, value } = req.body;
-    
+
     // 1. Get the agent profile
     const agentObj = await prisma.user.findUnique({
       where: { id: agentId }
@@ -517,7 +517,7 @@ const updateCommissionRate = async (req, res) => {
         commissionRate: Number(value)
       }
     });
-    
+
     res.json({ success: true });
   } catch (error) {
     console.error('Error updating commission rate:', error);
@@ -536,20 +536,20 @@ const getCommissionsReport = async (req, res) => {
       },
       orderBy: { createdAt: 'desc' }
     });
-    
+
     const report = payments.map(p => {
       const agent = p.client?.assignedTo;
-      const rate = p.commissionRate !== null && p.commissionRate !== undefined 
-        ? p.commissionRate 
+      const rate = p.commissionRate !== null && p.commissionRate !== undefined
+        ? p.commissionRate
         : (agent?.commissionRate || 0);
       const commissionEarned = p.amount * (rate / 100);
-      
+
       // For now, assume commission is accrued (pending) unless agent has explicitly been paid
       // We are distributing agent.commissionPaid across their payments sequentially if needed, 
       // but a simpler approach is just to flag them all as pending unless we build payout logic.
       // The UI expects commissionEarned, commissionPending, commissionPaid per row.
-      const commissionPaid = 0; 
-      
+      const commissionPaid = 0;
+
       return {
         id: p.id,
         date: p.createdAt.toISOString().split('T')[0],
@@ -564,7 +564,7 @@ const getCommissionsReport = async (req, res) => {
         commissionPending: commissionEarned - commissionPaid
       };
     });
-    
+
     res.json(report);
   } catch (error) {
     res.status(500).json({ message: 'Server error fetching commissions report' });
@@ -668,7 +668,7 @@ const createStripeCheckoutSession = async (req, res) => {
 
       await prisma.payment.update({
         where: { id: payment.id },
-        data: { 
+        data: {
           gatewayId: sessionData.sessionId,
           paymentMethod: 'Tabby'
         }
@@ -693,7 +693,7 @@ const createStripeCheckoutSession = async (req, res) => {
 
       await prisma.payment.update({
         where: { id: payment.id },
-        data: { 
+        data: {
           gatewayId: sessionData.sessionId,
           paymentMethod: 'Tamara'
         }
@@ -805,7 +805,7 @@ const verifyStripeCheckoutSession = async (req, res) => {
         const payment = await prisma.payment.findUnique({ where: { id: paymentId } });
         if (payment && payment.status !== 'Paid') {
           const finalPrice = payment.amount - (payment.discount || 0);
-          
+
           let snapshotRate = 0;
           const clientWithAgent = await prisma.client.findUnique({
             where: { id: payment.clientId },
@@ -852,7 +852,7 @@ const verifyStripeCheckoutSession = async (req, res) => {
       if (metadataPaymentId) {
         const payment = await prisma.payment.findUnique({ where: { id: metadataPaymentId } });
         if (payment && payment.status !== 'Paid') {
-          
+
           let snapshotRate = 0;
           const clientWithAgent = await prisma.client.findUnique({
             where: { id: payment.clientId },
@@ -924,9 +924,73 @@ const getCommissionHistory = async (req, res) => {
   }
 };
 
-module.exports = { 
-  getPayments, 
-  generatePaymentLink, 
+const createStripeCheckoutSession = async (req, res) => {
+  try {
+    const { paymentId, amount, clientName } = req.body;
+    const clientId = req.user?.id;
+
+    let payment = null;
+    if (paymentId) {
+      payment = await prisma.payment.findUnique({ where: { id: paymentId } });
+    }
+
+    if (!payment && clientId) {
+      payment = await prisma.payment.findFirst({
+        where: { clientId, status: 'Pending' }
+      });
+    }
+
+    const finalClientId = payment ? payment.clientId : clientId;
+    const payAmount = payment ? payment.amount : (Number(amount) || 2000);
+
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+
+    if (stripe) {
+      const session = await stripe.checkout.sessions.create({
+        payment_method_types: ['card'],
+        line_items: [{
+          price_data: {
+            currency: 'eur',
+            product_data: {
+              name: 'Spain Relocation Legal & Consulting Package',
+              description: `Invoice Payment for client: ${clientName || finalClientId}`
+            },
+            unit_amount: Math.round(payAmount * 100)
+          },
+          quantity: 1
+        }],
+        mode: 'payment',
+        success_url: `${frontendUrl}/#/portal/login?payment=success&id=${payment?.id || ''}&session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${frontendUrl}/#/portal/invoices/${payment?.id || ''}?cancelled=true`,
+        client_reference_id: payment?.id || '',
+        metadata: {
+          paymentId: payment?.id || '',
+          clientId: finalClientId
+        }
+      });
+
+      if (payment) {
+        await prisma.payment.update({
+          where: { id: payment.id },
+          data: { gatewayId: session.id }
+        });
+      }
+
+      return res.json({ url: session.url, checkoutUrl: session.url, sessionId: session.id });
+    } else {
+      const fallbackUrl = `${frontendUrl}/#/portal/login?payment=success&id=${payment?.id || ''}&session_id=demo_session_12345`;
+      return res.json({ url: fallbackUrl, checkoutUrl: fallbackUrl, sessionId: 'demo_session_12345' });
+    }
+  } catch (error) {
+    console.error('Error creating Stripe Checkout Session:', error);
+    res.status(500).json({ message: 'Server error creating Stripe Checkout Session', error: error.message });
+  }
+};
+
+
+module.exports = {
+  getPayments,
+  generatePaymentLink,
   updatePaymentStatus,
   getRefundRequests,
   createRefundRequest,

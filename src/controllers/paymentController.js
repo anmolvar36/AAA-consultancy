@@ -924,7 +924,6 @@ const getCommissionHistory = async (req, res) => {
   }
 };
 
-
 module.exports = { 
   getPayments, 
   generatePaymentLink, 

@@ -1,5 +1,5 @@
 const express = require('express');
-const { login, getMe } = require('../controllers/authController');
+const { login, getMe, verifyMagicToken } = require('../controllers/authController');
 const { authMiddleware } = require('../middlewares/authMiddleware');
 const { rateLimit } = require('express-rate-limit');
 
@@ -12,6 +12,7 @@ const loginLimiter = rateLimit({
 const router = express.Router();
 
 router.post('/login', loginLimiter, login);
+router.post('/verify-magic-token', verifyMagicToken);
 router.get('/me', authMiddleware, getMe);
 
 module.exports = router;

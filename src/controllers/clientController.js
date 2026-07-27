@@ -474,32 +474,6 @@ const updateClientStatus = async (req, res) => {
   }
 };
 
-const selectPackage = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { packageId, status, visaStatus } = req.body;
-
-    if (req.user.role === 'client' && req.user.id !== id) {
-      return res.status(403).json({ message: 'Access denied. You cannot select packages for other clients.' });
-    }
-
-    const client = await prisma.client.update({
-      where: { id },
-      data: {
-        packageId: packageId || undefined,
-        documentUploadAllowed: true,
-        status: status || 'Payment Received',
-        visaStatus: visaStatus || 'Document Preparation'
-      }
-    });
-
-    res.json({ success: true, client });
-  } catch (error) {
-    console.error('Error selecting package:', error);
-    res.status(500).json({ message: 'Server error selecting package' });
-  }
-};
-
 const generateCredentials = async (req, res) => {
   try {
     const { id } = req.params;
@@ -785,6 +759,85 @@ const updateClient = async (req, res) => {
   } catch (error) {
     console.error('Error in updateClient:', error);
     res.status(500).json({ message: 'Server error updating client', error: error.message });
+  }
+};
+
+const selectPackage = async (req, res) => {
+  try {
+    const { packageId, serviceType, amount = 2000, clientId: bodyClientId } = req.body;
+    let clientId = req.params.id || bodyClientId || req.user?.id;
+
+    let client = null;
+    if (clientId) {
+      client = await prisma.client.findUnique({ where: { id: clientId } });
+    }
+
+    if (!client && req.user?.email) {
+      client = await prisma.client.findFirst({ where: { email: req.user.email } });
+    }
+
+    if (!client) {
+      client = await prisma.client.findFirst({ orderBy: { createdAt: 'desc' } });
+    }
+
+    if (!client) {
+      return res.status(404).json({ message: 'Client profile not found.' });
+    }
+
+    clientId = client.id;
+
+    const basePrice = Number(amount);
+    const vatAmount = basePrice * 0.05;
+    const totalAmount = basePrice + vatAmount;
+
+    await prisma.client.update({
+      where: { id: clientId },
+      data: {
+        packageId: packageId || client.packageId,
+        serviceType: serviceType || client.serviceType,
+        status: 'Waiting for Payment'
+      }
+    });
+
+    let payment = await prisma.payment.findFirst({
+      where: { clientId, status: 'Pending' }
+    });
+
+    if (!payment) {
+      payment = await prisma.payment.create({
+        data: {
+          clientId,
+          amount: totalAmount,
+          discount: 0,
+          totalPaid: 0,
+          status: 'Pending',
+          paymentMethod: 'STRIPE',
+          dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
+        }
+      });
+    } else {
+      payment = await prisma.payment.update({
+        where: { id: payment.id },
+        data: {
+          amount: totalAmount,
+          dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
+        }
+      });
+    }
+
+    res.json({
+      message: 'Package selected successfully',
+      invoiceId: payment.id,
+      paymentId: payment.id,
+      basePrice,
+      vatAmount,
+      totalAmount,
+      currency: 'EUR',
+      status: payment.status
+    });
+  } catch (error) {
+    console.error('Error in selectPackage:', error);
+    res.status(500).json({ message: 'Server error selecting package', error: error.message });
   }
 };
 

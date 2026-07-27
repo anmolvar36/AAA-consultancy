@@ -377,7 +377,7 @@ exports.createEligibilityBooking = async (req, res) => {
         const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
         const rescheduleUrl = `${frontendUrl}/#/public/lead-form?reschedule=true&consultationId=${consultation.id}`;
         const cancelUrl = `${frontendUrl}/#/public/lead-form?cancel=true&consultationId=${consultation.id}`;
-        const packagesUrl = `${frontendUrl}/#/portal/login`;
+        const packagesUrl = "https://aaabusinessconsultancy.com/services-and-packages/";
 
         // 1. Send WhatsApp Message
         try {

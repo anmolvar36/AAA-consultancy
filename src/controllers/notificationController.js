@@ -107,25 +107,38 @@ const createDocumentNotification = async ({ userId, clientName, clientId, docume
 // Internal helper — called when a new lead form is submitted or assessment booked
 const createLeadNotification = async ({ leadName, email, phone, country, serviceCategory, appointmentDate, reqApp }) => {
   try {
-    // Find all staff members (super_admin, admin, operations, agent)
+    // Find ALL staff members across every role so nobody misses the notification
     const staffMembers = await prisma.user.findMany({
       where: {
-        role: { in: ['super_admin', 'admin', 'operations', 'agent'] }
+        role: { in: ['super_admin', 'admin', 'operations', 'consultant', 'finance', 'marketing', 'agent'] }
       },
-      select: { id: true }
+      select: { id: true, role: true }
     });
 
-    if (!staffMembers || staffMembers.length === 0) return;
+    console.log(`[Lead Notification] Found ${staffMembers.length} staff members to notify for lead: ${leadName || email}`);
+
+    if (!staffMembers || staffMembers.length === 0) {
+      console.warn('[Lead Notification] No staff members found in DB — skipping notification creation.');
+      return;
+    }
 
     const isBooking = !!appointmentDate;
     const title = isBooking 
       ? `📅 Assessment Booked: ${leadName || email || 'Client'}`
-      : `🎯 New Lead Ingested: ${leadName || email || 'Client'}`;
+      : `🎯 New Lead: ${leadName || email || 'Client'}`;
 
-    const formattedDate = appointmentDate ? new Date(appointmentDate).toLocaleString() : '';
+    let formattedDate = '';
+    if (appointmentDate) {
+      try {
+        formattedDate = new Date(appointmentDate).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+      } catch (_) {
+        formattedDate = appointmentDate;
+      }
+    }
+
     const body = isBooking
       ? `${leadName || email} (${country || 'Global'}) booked a Free Assessment for ${serviceCategory || 'Spain Visa'} on ${formattedDate}.`
-      : `${leadName || email} (${country || 'Global'}) submitted a new lead inquiry for ${serviceCategory || 'Spain Visa'}.`;
+      : `${leadName || email} (${country || 'Global'}) submitted a lead for ${serviceCategory || 'Spain Visa'}.`;
 
     const notificationEntries = staffMembers.map(staff => ({
       userId: staff.id,
@@ -136,19 +149,26 @@ const createLeadNotification = async ({ leadName, email, phone, country, service
     }));
 
     await prisma.notification.createMany({
-      data: notificationEntries
+      data: notificationEntries,
+      skipDuplicates: true
     });
 
-    console.log(`[Lead Notification Created] Created ${notificationEntries.length} notifications for ${leadName || email}`);
+    console.log(`[Lead Notification] ✅ Created ${notificationEntries.length} notifications for "${leadName || email}"`);
 
+    // Broadcast via Socket.io so UI updates in real-time without waiting for the 15s poll
     if (reqApp) {
       const io = reqApp.get('io');
       if (io) {
         io.emit('new-notification', { title, body, isBooking });
+        console.log('[Lead Notification] 📡 Socket.io broadcast sent.');
+      } else {
+        console.warn('[Lead Notification] Socket.io not available on req.app.');
       }
+    } else {
+      console.warn('[Lead Notification] reqApp not provided — skipping socket broadcast.');
     }
   } catch (error) {
-    console.error('Error creating lead notification:', error);
+    console.error('[Lead Notification] ❌ Error creating notification:', error.message, error.stack);
   }
 };
 

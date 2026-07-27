@@ -701,3 +701,156 @@ exports.handleZohoWebhook = async (req, res) => {
   }
 };
 
+exports.handleStripeWebhook = async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+  let event = req.body;
+
+  if (endpointSecret && sig) {
+    try {
+      const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+      event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
+    } catch (err) {
+      console.error('[Stripe Webhook Signature Verification Failed]:', err.message);
+      return res.status(400).send(`Webhook Error: ${err.message}`);
+    }
+  }
+
+  // Respond immediately to Stripe
+  res.status(200).json({ received: true });
+
+  try {
+    if (event && (event.type === 'checkout.session.completed' || event.type === 'payment_intent.succeeded')) {
+      const session = event.data?.object || {};
+      const paymentId = session.metadata?.paymentId || session.client_reference_id;
+      const clientId = session.metadata?.clientId;
+
+      console.log(`[Stripe Webhook] Received successful payment for Payment ID: ${paymentId}, Client ID: ${clientId}`);
+
+      let paymentRecord = null;
+      if (paymentId) {
+        paymentRecord = await prisma.payment.findUnique({
+          where: { id: paymentId },
+          include: { client: true }
+        });
+      }
+
+      if (!paymentRecord && clientId) {
+        paymentRecord = await prisma.payment.findFirst({
+          where: { clientId, status: 'Pending' },
+          include: { client: true }
+        });
+      }
+
+      if (paymentRecord) {
+        const totalPaidAmount = session.amount_total ? session.amount_total / 100 : paymentRecord.amount;
+
+        // 1. Update Payment Status to Paid
+        await prisma.payment.update({
+          where: { id: paymentRecord.id },
+          data: {
+            status: 'Paid',
+            totalPaid: totalPaidAmount,
+            paymentMethod: 'STRIPE',
+            transactionId: session.payment_intent || session.id || `stripe-tx-${Date.now()}`
+          }
+        });
+
+        // 2. Unlock Client Document Upload & Update Status to Active
+        const client = await prisma.client.update({
+          where: { id: paymentRecord.clientId },
+          data: {
+            status: 'Active',
+            visaStatus: 'Document Upload In Progress',
+            documentUploadAllowed: true
+          }
+        });
+
+        // 3. Generate Paid PDF Receipt
+        try {
+          const { generateReceiptPDF } = require('../services/pdfReceiptService');
+          const pdfBuffer = await generateReceiptPDF({
+            paymentId: paymentRecord.id,
+            clientName: `${client.firstName} ${client.lastName}`,
+            clientEmail: client.email,
+            serviceType: client.serviceType || 'Spain Relocation Legal Package',
+            amount: paymentRecord.amount,
+            vatAmount: paymentRecord.amount * 0.05,
+            totalPaid: totalPaidAmount,
+            transactionId: session.payment_intent || session.id || `stripe-tx-${Date.now()}`,
+            paymentDate: new Date()
+          });
+
+          // Save receipt locally
+          const receiptsDir = path.join(__dirname, '../../public/receipts');
+          if (!fs.existsSync(receiptsDir)) {
+            fs.mkdirSync(receiptsDir, { recursive: true });
+          }
+          const receiptFilePath = path.join(receiptsDir, `Receipt-${paymentRecord.id}.pdf`);
+          fs.writeFileSync(receiptFilePath, pdfBuffer);
+
+          const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+          const docUploadUrl = `${frontendUrl}/#/portal/docs`;
+
+          // 4. Send PDF Receipt + Document Upload Link via Email & WhatsApp
+          const { sendEmail } = require('../services/emailService');
+          const { sendWhatsAppMessage } = require('../services/whatsappService');
+
+          sendEmail({
+            to: client.email,
+            subject: '🎉 Payment Received - Official Tax Receipt & Document Upload Link',
+            html: `
+              <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; color: #0F172A;">
+                <h2 style="color: #051A3B;">AAA Business Consultancy</h2>
+                <h3 style="color: #10B981;">Payment Received Successfully! 🎉</h3>
+                <p>Hello <strong>${client.firstName} ${client.lastName}</strong>,</p>
+                <p>Thank you for completing your payment of <strong>€${totalPaidAmount.toFixed(2)}</strong> for your Spain Visa & Relocation Package.</p>
+                <div style="background-color: #F8FAFC; border-left: 4px solid #10B981; padding: 16px; margin: 20px 0; border-radius: 4px;">
+                  <p style="margin: 4px 0;"><strong>Receipt ID:</strong> ${paymentRecord.id}</p>
+                  <p style="margin: 4px 0;"><strong>Transaction ID:</strong> ${session.payment_intent || session.id || 'N/A'}</p>
+                  <p style="margin: 4px 0;"><strong>Document Upload Status:</strong> <span style="color: #10B981; font-weight: bold;">UNLOCKED 🔓</span></p>
+                </div>
+                <p>Your document upload portal is now fully active. Please click the button below to upload your visa requirements:</p>
+                <div style="text-align: center; margin: 30px 0;">
+                  <a href="${docUploadUrl}" style="background-color: #051A3B; color: #FFFFFF; padding: 14px 28px; border-radius: 6px; text-decoration: none; font-weight: bold; font-size: 16px;">
+                    Upload Documents Now →
+                  </a>
+                </div>
+              </div>
+            `,
+            attachments: [
+              {
+                filename: `Receipt-${paymentRecord.id}.pdf`,
+                content: pdfBuffer
+              }
+            ]
+          }).catch(err => console.error('[Webhook Email Error]:', err.message));
+
+          if (client.phone) {
+            sendWhatsAppMessage({
+              to: client.phone,
+              templateName: 'payment_received_receipt',
+              components: [
+                {
+                  type: 'body',
+                  parameters: [
+                    { type: 'text', text: `${client.firstName} ${client.lastName}` },
+                    { type: 'text', text: `€${totalPaidAmount.toFixed(2)}` },
+                    { type: 'text', text: docUploadUrl }
+                  ]
+                }
+              ]
+            }).catch(err => console.error('[Webhook WhatsApp Error]:', err.message));
+          }
+
+        } catch (pdfErr) {
+          console.error('[Receipt PDF Generation Error]:', pdfErr.message);
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Error handling Stripe webhook:', error.message);
+  }
+};
+

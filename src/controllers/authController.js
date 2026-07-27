@@ -109,4 +109,46 @@ const getMe = async (req, res) => {
   }
 };
 
-module.exports = { login, getMe };
+const verifyMagicToken = async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ message: 'Token is required.' });
+
+    const jwtSecret = process.env.JWT_SECRET || 'aaa_super_secret_jwt_key_2026_consultancy';
+    const decoded = jwt.verify(token, jwtSecret);
+
+    const clientId = decoded.clientId || decoded.id;
+    let client = await prisma.client.findUnique({
+      where: { id: clientId }
+    });
+
+    if (!client) {
+      return res.status(404).json({ message: 'Client profile not found or link expired.' });
+    }
+
+    const sessionToken = jwt.sign(
+      { id: client.id, role: 'client', email: client.email, name: `${client.firstName} ${client.lastName}` },
+      jwtSecret,
+      { expiresIn: '7d' }
+    );
+
+    res.json({
+      message: 'Magic link authenticated successfully',
+      token: sessionToken,
+      user: {
+        id: client.id,
+        name: `${client.firstName} ${client.lastName}`,
+        email: client.email,
+        role: 'client',
+        status: client.status,
+        documentUploadAllowed: client.documentUploadAllowed,
+        packageId: client.packageId
+      }
+    });
+  } catch (error) {
+    console.error('Magic Token Error:', error);
+    res.status(401).json({ message: 'Invalid or expired magic link.', error: error.message });
+  }
+};
+
+module.exports = { login, getMe, verifyMagicToken };

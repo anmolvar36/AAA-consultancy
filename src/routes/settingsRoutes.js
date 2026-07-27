@@ -9,7 +9,9 @@ const {
   getVisaServices,
   updateVisaServices,
   getPackages,
+  createPackage,
   updatePackages,
+  deletePackage,
   getEmailTemplates,
   updateEmailTemplates,
   getWhatsappTemplates,
@@ -24,20 +26,24 @@ router.route('/customization')
   .put(authMiddleware, updateCustomizationSettings);
 
 router.route('/lead-stages')
-  .get(authMiddleware, getLeadStages)
+  .get(getLeadStages)
   .put(authMiddleware, updateLeadStages);
 
 router.route('/company')
-  .get(authMiddleware, getCompanySettings)
+  .get(getCompanySettings)
   .put(authMiddleware, updateCompanySettings);
 
 router.route('/services')
-  .get(authMiddleware, getVisaServices)
+  .get(getVisaServices)
   .put(authMiddleware, updateVisaServices);
 
 router.route('/packages')
-  .get(authMiddleware, getPackages)
+  .get(getPackages)
+  .post(authMiddleware, createPackage)
   .put(authMiddleware, updatePackages);
+
+router.route('/packages/:id')
+  .delete(authMiddleware, deletePackage);
 
 router.route('/templates/email')
   .get(authMiddleware, getEmailTemplates)

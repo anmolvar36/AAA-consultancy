@@ -230,7 +230,20 @@ const updateCompanySettings = async (req, res) => {
 
 const getVisaServices = async (req, res) => {
   try {
-    const services = await prisma.visaService.findMany();
+    let services = await prisma.visaService.findMany();
+    if (services.length === 0) {
+      const defaultServices = [
+        { name: 'Digital Nomad Residency Visa (DNV)', category: 'Residency', basePrice: 3500, active: true },
+        { name: 'Non-Lucrative Residency Visa (NLV)', category: 'Residency', basePrice: 3500, active: true },
+        { name: 'Spanish Higher Education Student Visa', category: 'Study', basePrice: 1750, active: true },
+        { name: 'Golden Visa / Real Estate Investor Residency', category: 'Investment', basePrice: 5000, active: true },
+        { name: 'Schengen Short-Stay Tourist Visa', category: 'Schengen', basePrice: 500, active: true }
+      ];
+      for (const s of defaultServices) {
+        await prisma.visaService.create({ data: s });
+      }
+      services = await prisma.visaService.findMany();
+    }
     res.json(services);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -274,44 +287,163 @@ const updateVisaServices = async (req, res) => {
 
 const getPackages = async (req, res) => {
   try {
-    const packages = await prisma.relocationPackage.findMany();
+    let packages = await prisma.relocationPackage.findMany();
+    if (packages.length === 0) {
+      const defaultPkgs = [
+        {
+          code: 'full_process',
+          name: 'OPTION A: FULL PROCESSING PACKAGE',
+          description: 'Complete professional end-to-end support for Spain Residency applications from eligibility to submission.',
+          price: 3500,
+          additionalApplicantPrice: 500,
+          isRecommended: false,
+          includes: ['Eligibility & Document Auditing', 'Official Sworn Translation Management', 'Digital Nomad / NLV File Assembly', 'Consulate Appointment Assistance', 'Post-Submission Status Tracking']
+        },
+        {
+          code: 'premium',
+          name: 'OPTION B: PREMIUM PACKAGE',
+          description: 'Everything in Full Process + complete relocation administrative assistance (NIE/TIE fingerprint appointments, empadronamiento local registration, Social Security, Spanish Bank setup).',
+          price: 4750,
+          additionalApplicantPrice: 750,
+          isRecommended: true,
+          includes: ['Everything in Full Processing Package', 'Spanish Bank Account Opening Assistance', 'NIE / TIE Fingerprint Appointment Booking', 'Empadronamiento (Town Hall Registration)', 'Spanish Social Security Registration']
+        },
+        {
+          code: 'relocation',
+          name: 'OPTION C: ADMINISTRATIVE RELOCATION PACKAGE',
+          description: 'Post-approval administrative relocation support for clients who already have their visa approved and need settlement help in Spain.',
+          price: 1750,
+          additionalApplicantPrice: 500,
+          isRecommended: false,
+          includes: ['Post-Approval Residency Card (TIE) Processing', 'Town Hall Registration (Empadronamiento)', 'Spanish Health Card / Private Insurance Setup', 'Driver License Exchange Guidance']
+        }
+      ];
+      for (const p of defaultPkgs) {
+        await prisma.relocationPackage.create({ data: p });
+      }
+      packages = await prisma.relocationPackage.findMany();
+    }
     res.json(packages);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
 
+const createPackage = async (req, res) => {
+  try {
+    const { code, name, description, price, additionalApplicantPrice, isRecommended, includes } = req.body;
+
+    if (isRecommended) {
+      await prisma.relocationPackage.updateMany({
+        data: { isRecommended: false }
+      });
+    }
+
+    const created = await prisma.relocationPackage.create({
+      data: {
+        code: code || `pkg_${Date.now()}`,
+        name: name || 'NEW PACKAGE',
+        description: description || '',
+        price: Number(price) || 0,
+        additionalApplicantPrice: Number(additionalApplicantPrice) || 500,
+        isRecommended: !!isRecommended,
+        includes: Array.isArray(includes) ? includes : []
+      }
+    });
+
+    const packages = await prisma.relocationPackage.findMany();
+    res.json({ success: true, package: created, packages });
+  } catch (error) {
+    console.error('Error creating package:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+const deletePackage = async (req, res) => {
+  try {
+    const { id } = req.params;
+    await prisma.relocationPackage.delete({
+      where: { id }
+    });
+    const packages = await prisma.relocationPackage.findMany();
+    res.json({ success: true, packages });
+  } catch (error) {
+    console.error('Error deleting package:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
 const updatePackages = async (req, res) => {
   try {
-    const packages = req.body;
-    for (const p of packages) {
-      if (p.id && !p.id.startsWith('pkg_')) {
-        const exists = await prisma.relocationPackage.findUnique({ where: { id: p.id } });
-        if (exists) {
-          await prisma.relocationPackage.update({
-            where: { id: p.id },
-            data: {
-              name: p.name,
-              description: p.description,
-              price: p.price,
-              includes: p.includes
-            }
+    const packagesArr = Array.isArray(req.body) ? req.body : [req.body];
+
+    for (const p of packagesArr) {
+      if (p.isRecommended) {
+        await prisma.relocationPackage.updateMany({
+          data: { isRecommended: false }
+        });
+      }
+
+      let existing = null;
+      if (p.id && !p.id.startsWith('opt_')) {
+        try {
+          existing = await prisma.relocationPackage.findUnique({ where: { id: p.id } });
+        } catch (e) {
+          existing = null;
+        }
+      }
+
+      if (!existing) {
+        const isOptA = (p.code && (p.code.toLowerCase().includes('opt_a') || p.code.toLowerCase().includes('full'))) || (p.name && p.name.toUpperCase().includes('OPTION A'));
+        const isOptB = (p.code && (p.code.toLowerCase().includes('opt_b') || p.code.toLowerCase().includes('premium'))) || (p.name && p.name.toUpperCase().includes('OPTION B'));
+        const isOptC = (p.code && (p.code.toLowerCase().includes('opt_c') || p.code.toLowerCase().includes('relocation'))) || (p.name && p.name.toUpperCase().includes('OPTION C'));
+
+        if (isOptA) {
+          existing = await prisma.relocationPackage.findFirst({
+            where: { OR: [{ code: 'full_process' }, { code: 'opt_a' }, { name: { contains: 'OPTION A' } }] }
+          });
+        } else if (isOptB) {
+          existing = await prisma.relocationPackage.findFirst({
+            where: { OR: [{ code: 'premium' }, { code: 'opt_b' }, { name: { contains: 'OPTION B' } }] }
+          });
+        } else if (isOptC) {
+          existing = await prisma.relocationPackage.findFirst({
+            where: { OR: [{ code: 'relocation' }, { code: 'opt_c' }, { name: { contains: 'OPTION C' } }] }
           });
         }
-      } else {
-        await prisma.relocationPackage.create({
+      }
+
+      if (existing) {
+        await prisma.relocationPackage.update({
+          where: { id: existing.id },
           data: {
             name: p.name,
             description: p.description,
-            price: p.price,
-            includes: p.includes
+            price: Number(p.price) || 0,
+            additionalApplicantPrice: Number(p.additionalApplicantPrice) || 500,
+            isRecommended: !!p.isRecommended,
+            includes: Array.isArray(p.includes) ? p.includes : []
+          }
+        });
+      } else {
+        await prisma.relocationPackage.create({
+          data: {
+            code: p.code || p.id || `pkg_${Date.now()}`,
+            name: p.name,
+            description: p.description,
+            price: Number(p.price) || 0,
+            additionalApplicantPrice: Number(p.additionalApplicantPrice) || 500,
+            isRecommended: !!p.isRecommended,
+            includes: Array.isArray(p.includes) ? p.includes : []
           }
         });
       }
     }
+
     const allPkgs = await prisma.relocationPackage.findMany();
     res.json(allPkgs);
   } catch (error) {
+    console.error('Error updating packages:', error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -405,6 +537,8 @@ module.exports = {
   updateVisaServices,
   getPackages,
   updatePackages,
+  createPackage,
+  deletePackage,
   getEmailTemplates,
   updateEmailTemplates,
   getWhatsappTemplates,

@@ -10,6 +10,8 @@ const {
   updateVisaServices,
   getPackages,
   updatePackages,
+  createPackage,
+  deletePackage,
   getEmailTemplates,
   updateEmailTemplates,
   getWhatsappTemplates,
@@ -37,7 +39,10 @@ router.route('/services')
 
 router.route('/packages')
   .get(authMiddleware, getPackages)
+  .post(authMiddleware, createPackage)
   .put(authMiddleware, updatePackages);
+
+router.delete('/packages/:id', authMiddleware, deletePackage);
 
 router.route('/templates/email')
   .get(authMiddleware, getEmailTemplates)

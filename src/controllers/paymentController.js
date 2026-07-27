@@ -926,8 +926,8 @@ const getCommissionHistory = async (req, res) => {
 
 const createStripeCheckoutSession = async (req, res) => {
   try {
-    const { paymentId, amount, clientName } = req.body;
-    const clientId = req.user?.id;
+    const { paymentId, amount, clientName, clientId: bodyClientId } = req.body;
+    const clientId = bodyClientId || req.user?.id;
 
     let payment = null;
     if (paymentId) {
@@ -976,10 +976,10 @@ const createStripeCheckoutSession = async (req, res) => {
         });
       }
 
-      return res.json({ url: session.url, checkoutUrl: session.url, sessionId: session.id });
+      return res.json({ success: true, url: session.url, checkoutUrl: session.url, sessionId: session.id });
     } else {
       const fallbackUrl = `${frontendUrl}/#/portal/login?payment=success&id=${payment?.id || ''}&session_id=demo_session_12345`;
-      return res.json({ url: fallbackUrl, checkoutUrl: fallbackUrl, sessionId: 'demo_session_12345' });
+      return res.json({ success: true, url: fallbackUrl, checkoutUrl: fallbackUrl, sessionId: 'demo_session_12345' });
     }
   } catch (error) {
     console.error('Error creating Stripe Checkout Session:', error);

@@ -481,7 +481,7 @@ async function syncLeadConsultation(leadId) {
     const consultationStatus = 'Pending Acceptance';
     const fallbackDate = lead.formSubmittedAt ? new Date(lead.formSubmittedAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
     const meetingDate = lead.meetingPreferredDate || fallbackDate;
-    const meetingTime = lead.meetingPreferredTime || 'TBD / Flexible';
+    const meetingTime = lead.meetingPreferredTime || '09:00';
 
     if (!consultation) {
       consultation = await prisma.consultation.create({

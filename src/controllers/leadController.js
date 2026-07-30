@@ -289,6 +289,21 @@ const deleteLead = async (req, res) => {
       where: { id }
     });
 
+    // Wipe Redis Chatbot Session & Agent Mode lock so new message triggers fresh greeting link
+    if (lead && lead.phone) {
+      try {
+        const { connection: redis } = require('../queues/connection');
+        const cleanPhone = '+' + lead.phone.replace(/[^\d]/g, '');
+        if (redis && redis.del) {
+          await redis.del(`chatbot:session:${cleanPhone}`);
+          await redis.del(`chatbot:agent_mode:${cleanPhone}`);
+          console.log(`[Redis Cleanup] Cleared chatbot session & agent mode for deleted lead phone ${cleanPhone}`);
+        }
+      } catch (rErr) {
+        console.warn('[Redis Cleanup Error]:', rErr.message);
+      }
+    }
+
     res.json({ success: true, message: 'Lead deleted successfully', lead });
   } catch (error) {
     res.status(500).json({ message: 'Server error deleting lead', error: error.message });

@@ -30,19 +30,26 @@ exports.createEligibilityBooking = async (req, res) => {
     } = req.body;
 
     // 1. Anti-Fraud & Identity Normalization
-    const normalizedPhone = phone.replace(/[\s\-\+]/g, ''); // strip spaces, dashes, country code prefix (naively for now)
+    const cleanEmail = email ? String(email).toLowerCase().trim() : '';
+    const normalizedPhone = (phone || '').replace(/[\s\-\+]/g, '');
+
+    const matchConditions = [];
+    if (cleanEmail) matchConditions.push({ email: cleanEmail });
+    if (normalizedPhone) matchConditions.push({ phone: { contains: normalizedPhone } });
 
     // 2. Check for Blocking (Cross-Device Detection)
-    const blockedClient = await prisma.client.findFirst({
-      where: {
-        isBlocked: true,
-        OR: [
-          { email: email.toLowerCase() },
-          { phone: { contains: normalizedPhone } }, // Fuzzy match
-          ...(deviceFingerprint ? [{ deviceFingerprint }] : [])
-        ]
-      }
-    });
+    let blockedClient = null;
+    if (matchConditions.length > 0 || deviceFingerprint) {
+      blockedClient = await prisma.client.findFirst({
+        where: {
+          isBlocked: true,
+          OR: [
+            ...matchConditions,
+            ...(deviceFingerprint ? [{ deviceFingerprint }] : [])
+          ]
+        }
+      });
+    }
 
     if (blockedClient) {
       return res.status(403).json({
@@ -53,19 +60,19 @@ exports.createEligibilityBooking = async (req, res) => {
     }
 
     // 2b. Check for BlacklistedClient (missed prior appointments)
-    const blacklisted = await prisma.blacklistedClient.findFirst({
-      where: {
-        OR: [
-          { email: email.toLowerCase() },
-          { phone: { contains: normalizedPhone } }
-        ]
-      }
-    });
+    let blacklisted = null;
+    if (matchConditions.length > 0) {
+      blacklisted = await prisma.blacklistedClient.findFirst({
+        where: {
+          OR: matchConditions
+        }
+      });
+    }
 
     const { isNameSimilar } = require('../utils/fuzzyMatch');
     const blacklist = await prisma.blacklistedClient.findMany();
     const fullNameInput = `${firstName || ''} ${lastName || ''}`.trim();
-    const matchesBlacklistByName = blacklist.some(b => isNameSimilar(fullNameInput, b.name));
+    const matchesBlacklistByName = fullNameInput.length > 2 && blacklist.some(b => isNameSimilar(fullNameInput, b.name));
 
     if (blacklisted || matchesBlacklistByName) {
       return res.status(403).json({
@@ -76,15 +83,15 @@ exports.createEligibilityBooking = async (req, res) => {
     }
 
     // 2c. Check for Duplicate Active Bookings (Status-aware based on Most Recent Lead)
-    const latestLead = await prisma.lead.findFirst({
-      where: {
-        OR: [
-          { email: email.toLowerCase() },
-          { phone: { contains: normalizedPhone } }
-        ]
-      },
-      orderBy: { createdAt: 'desc' }
-    });
+    let latestLead = null;
+    if (matchConditions.length > 0) {
+      latestLead = await prisma.lead.findFirst({
+        where: {
+          OR: matchConditions
+        },
+        orderBy: { createdAt: 'desc' }
+      });
+    }
 
     const inactiveStatuses = ['Lost Lead', 'Spam', 'Cold Lead', 'No Show', 'Completed', 'Cancelled', 'Canceled', 'Refused'];
     

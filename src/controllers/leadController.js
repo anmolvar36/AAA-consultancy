@@ -237,6 +237,24 @@ const updateLeadStatus = async (req, res) => {
       } catch (dbErr) {
         console.error('[Blacklist] Failed to insert blacklist record:', dbErr.message);
       }
+    } else if (lead.email || lead.phone) {
+      // Automatically unblock/remove from blacklistedClient when status is changed away from No Show
+      try {
+        const cleanEmail = (lead.email || '').toLowerCase().trim();
+        const cleanPhone = (lead.phone || '').replace(/\D/g, '');
+        const matchConditions = [];
+        if (cleanEmail) matchConditions.push({ email: cleanEmail });
+        if (cleanPhone) matchConditions.push({ phone: { contains: cleanPhone.slice(-10) } });
+
+        if (matchConditions.length > 0) {
+          await prisma.blacklistedClient.deleteMany({
+            where: { OR: matchConditions }
+          });
+          console.log(`[Unblock] Removed from blacklist as status changed to ${status}: ${lead.email}`);
+        }
+      } catch (dbErr) {
+        console.error('[Unblock] Failed to remove blacklist record:', dbErr.message);
+      }
     }
 
     const { logActivity } = require('../services/auditService');

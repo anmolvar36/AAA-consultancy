@@ -147,6 +147,7 @@ let CURRENT_LEAD_STAGES = [
   { id: 'stage_hot_lead', name: 'Hot Lead', type: 'lead', color: '#FF9800', emoji: '🔥' },
   { id: 'stage_processing', name: 'Processing', type: 'lead', color: '#3F51B5', emoji: '⚙️' },
   { id: 'stage_under_consultation', name: 'Under Consultation', type: 'lead', color: '#9C27B0', emoji: '📅' },
+  { id: 'stage_no_show', name: 'No Show', type: 'lead', color: '#E53E3E', emoji: '🚫' },
   { id: 'stage_waiting_payment', name: 'Waiting for Payment', type: 'client', color: '#FF5722', emoji: '💳' },
   { id: 'stage_documents_pending', name: 'Documents Pending', type: 'client', color: '#E91E63', emoji: '📎' },
   { id: 'stage_under_process', name: 'Under Process', type: 'client', color: '#03A9F4', emoji: '📂' },
@@ -159,10 +160,20 @@ let CURRENT_LEAD_STAGES = [
 const getLeadStages = async (req, res) => {
   try {
     const setting = await prisma.companySetting.findFirst();
-    if (setting && setting.leadStages && Array.isArray(setting.leadStages) && setting.leadStages.length > 0) {
-      return res.json(setting.leadStages);
+    let stages = (setting && setting.leadStages && Array.isArray(setting.leadStages) && setting.leadStages.length > 0)
+      ? setting.leadStages
+      : CURRENT_LEAD_STAGES;
+
+    // Guarantee 'No Show' is present in stages list
+    const hasNoShow = stages.some(s => (s.name || '').toLowerCase() === 'no show' || (s.id || '').toLowerCase() === 'stage_no_show');
+    if (!hasNoShow) {
+      stages = [
+        ...stages,
+        { id: 'stage_no_show', name: 'No Show', type: 'lead', color: '#E53E3E', emoji: '🚫' }
+      ];
     }
-    res.json(CURRENT_LEAD_STAGES);
+
+    res.json(stages);
   } catch (error) {
     res.json(CURRENT_LEAD_STAGES);
   }

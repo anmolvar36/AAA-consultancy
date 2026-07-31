@@ -55,11 +55,12 @@ exports.handleChatbotMessage = async (phone, name, text, messageId = null, media
     return;
   }
 
-  const isResumeCommand = (cleanMessage === 'menu' || cleanMessage === 'help' || cleanMessage === 'start');
+  const greetingTriggers = ['hi', 'hii', 'hiii', 'hello', 'hey', 'start', 'menu', 'help'];
+  const isResumeCommand = greetingTriggers.some(t => cleanMessage === t || cleanMessage.startsWith(t + ' ') || cleanMessage.endsWith(' ' + t));
   if (isResumeCommand) {
     if (isAgentMode === 'true') {
       await redis.del(agentModeKey);
-      console.log(`Chatbot: Agent mode disabled for ${cleanPhone} by menu reset command.`);
+      console.log(`Chatbot: Agent mode disabled for ${cleanPhone} by greeting/menu command.`);
     }
   }
 
@@ -245,10 +246,10 @@ async function sendCustomWhatsApp(phone, messageBody) {
     cleanPhone = '+' + cleanPhone;
   }
 
-  // Sandbox Mode Whitelist Filter (Defaults to Active with +917047687998)
-  const isTestMode = process.env.TEST_MODE !== 'false'; // Defaults to true
+  // Sandbox Mode Whitelist Filter (Defaults to Active with +917047687998 & +918770145658)
+  const isTestMode = process.env.TEST_MODE === 'true'; // Only block if TEST_MODE is explicitly enabled
   if (isTestMode) {
-    const whitelistStr = process.env.TEST_PHONES || '+917047687998,+971524350123,+971524360123,+971566952566';
+    const whitelistStr = process.env.TEST_PHONES || '+917047687998,+971524350123,+971524360123,+971566952566,+918770145658';
     const testPhones = whitelistStr.split(',').map(p => p.trim());
     if (!testPhones.includes(cleanPhone)) {
       console.log(`[TEST MODE] Blocked automated outbound WhatsApp message to ${cleanPhone} (not whitelisted)`);

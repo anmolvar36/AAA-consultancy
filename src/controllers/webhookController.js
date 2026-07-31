@@ -200,125 +200,144 @@ exports.handleStripeWebhook = async (req, res) => {
   res.send();
 
   const session = event.data.object;
-  if (event.type === 'checkout.session.completed' && session?.metadata?.type === 'no_show_case_assessment') {
+  if (event.type === 'checkout.session.completed' && (session?.metadata?.type === 'no_show_fee' || session?.metadata?.type === 'no_show_case_assessment')) {
     const clientId = session.metadata.clientId;
+    const leadId = session.metadata.leadId;
     const paymentId = session.metadata.paymentId;
     
     try {
-      // Get agent's commission rate
-      let snapshotRate = 0;
-      const clientWithAgent = await prisma.client.findUnique({
-        where: { id: clientId },
-        include: { assignedTo: true }
-      });
-      if (clientWithAgent && clientWithAgent.assignedTo) {
-        snapshotRate = clientWithAgent.assignedTo.commissionRate || 0;
+      if (paymentId) {
+        let snapshotRate = 0;
+        if (clientId) {
+          const clientWithAgent = await prisma.client.findUnique({
+            where: { id: clientId },
+            include: { assignedTo: true }
+          }).catch(() => null);
+          if (clientWithAgent && clientWithAgent.assignedTo) {
+            snapshotRate = clientWithAgent.assignedTo.commissionRate || 0;
+          }
+        }
+
+        await prisma.payment.update({
+          where: { id: paymentId },
+          data: {
+            status: 'Paid',
+            transactionId: session.id,
+            paymentMethod: 'Stripe',
+            totalPaid: session.amount_total ? session.amount_total / 100 : 250.00,
+            commissionRate: snapshotRate
+          }
+        }).catch(() => null);
       }
 
-      // 1. Update Payment status to Paid
-      await prisma.payment.update({
-        where: { id: paymentId },
-        data: {
-          status: 'Paid',
-          transactionId: session.id,
-          paymentMethod: 'Stripe',
-          totalPaid: session.amount_total ? session.amount_total / 100 : 262.50,
-          commissionRate: snapshotRate
-        }
-      });
+      // Fetch Lead or Client
+      let targetLead = null;
+      let targetClient = null;
 
-      // 2. Fetch Client and Lead
-      const client = await prisma.client.findUnique({
-        where: { id: clientId },
-        include: { lead: true }
-      });
+      if (leadId) {
+        targetLead = await prisma.lead.findUnique({ where: { id: leadId } }).catch(() => null);
+      }
+      if (clientId && !targetClient) {
+        targetClient = await prisma.client.findUnique({ where: { id: clientId }, include: { lead: true } }).catch(() => null);
+        if (targetClient && targetClient.lead) targetLead = targetClient.lead;
+      }
+      if (!targetLead && targetClient?.email) {
+        targetLead = await prisma.lead.findFirst({ where: { email: targetClient.email } }).catch(() => null);
+      }
 
-      if (client) {
-        // 3. Remove client from blacklistedClient table
+      const emailToUnblock = targetLead?.email || targetClient?.email;
+      const phoneToUnblock = targetLead?.phone || targetClient?.phone;
+
+      // 1. Remove from BlacklistedClient table
+      if (emailToUnblock || phoneToUnblock) {
+        const conditions = [];
+        if (emailToUnblock) conditions.push({ email: emailToUnblock.toLowerCase() });
+        if (phoneToUnblock) conditions.push({ phone: phoneToUnblock });
+
         try {
           await prisma.blacklistedClient.deleteMany({
-            where: {
-              OR: [
-                { email: client.email.toLowerCase() },
-                { phone: client.phone }
-              ]
-            }
+            where: { OR: conditions }
           });
-          console.log(`[Stripe Webhook] Removed client ${client.email} from blacklist`);
+          console.log(`[Stripe Webhook] Removed ${emailToUnblock || phoneToUnblock} from blacklist`);
         } catch (delErr) {
-          console.warn('[Stripe Webhook] Blacklist deletion failed:', delErr.message);
-        }
-
-        // 4. Update Client status
-        await prisma.client.update({
-          where: { id: client.id },
-          data: {
-            status: 'Payment Received',
-            isBlocked: false
-          }
-        });
-
-        if (client.lead) {
-          await prisma.lead.update({
-            where: { id: client.lead.id },
-            data: {
-              status: 'Payment Received'
-            }
-          });
-        }
-
-        // 5. Generate secure JWT token for pre-filled re-booking
-        const jwt = require('jsonwebtoken');
-        const secret = process.env.JWT_SECRET || 'secret123';
-        const prefillToken = jwt.sign(
-          { clientId: client.id, leadId: client.lead?.id },
-          secret,
-          { expiresIn: '2d' } // Link valid for 2 days
-        );
-
-        // 6. Construct re-booking link
-        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-        const rebookLink = `${frontendUrl}/#/public/booking?token=${prefillToken}`;
-
-        // 7. Dispatch WhatsApp and Email confirmation
-        const { sendCustomWhatsApp } = require('../services/chatbotService');
-        const { sendEmail } = require('../services/emailService');
-
-        const clientName = `${client.firstName} ${client.lastName}`;
-        const messageBody = `Hello *${clientName}*,\n\nWe have successfully received your payment of *€250* (plus 5% VAT) for the Professional Case Assessment. 🎉\n\nYour account has been un-blocked. Please click the link below to select your new date & time slot for the 1-to-1 Case Review (your details are pre-filled):\n🔗 ${rebookLink}`;
-
-        await sendCustomWhatsApp(client.phone, messageBody).catch(err => console.error('[Webhook Stripe] Failed to send re-book WA:', err.message));
-
-        await sendEmail({
-          to: client.email,
-          subject: 'Payment Confirmed - Rebook Your Case Assessment - AAA Business Consultancy',
-          html: `
-            <h3>Payment Successful</h3>
-            <p>Dear ${client.firstName},</p>
-            <p>We have successfully received your payment of <strong>€250</strong> (plus 5% VAT) for the Professional Case Assessment.</p>
-            <p>Your account has been un-blocked. Please reschedule your One-to-One Case Review session by clicking the link below:</p>
-            <p><a href="${rebookLink}">Reschedule Your Consultation Meeting</a></p>
-            <p>Thank you for choosing AAA Business Consultancy!</p>
-          `
-        }).catch(err => console.error('[Webhook Stripe] Failed to send re-book email:', err.message));
-
-        // Schedule Phase 7 Drips & Google Review if remindersQueue is active
-        const { remindersQueue } = require('../queues/queueSetup');
-        if (remindersQueue && remindersQueue.add) {
-          // 1. Schedule Upgrade drips (3d, 7d, 10d, 14d)
-          await remindersQueue.add('paid-assessment-upgrade-drip', { clientId: client.id, dripIndex: 1 }, { delay: 3 * 24 * 60 * 60 * 1000 });
-          await remindersQueue.add('paid-assessment-upgrade-drip', { clientId: client.id, dripIndex: 2 }, { delay: 7 * 24 * 60 * 60 * 1000 });
-          await remindersQueue.add('paid-assessment-upgrade-drip', { clientId: client.id, dripIndex: 3 }, { delay: 10 * 24 * 60 * 60 * 1000 });
-          await remindersQueue.add('paid-assessment-upgrade-drip', { clientId: client.id, dripIndex: 4 }, { delay: 14 * 24 * 60 * 60 * 1000 });
-
-          // 2. Schedule Google Review request drip (3d)
-          await remindersQueue.add('google-review-request-drip', { clientId: client.id }, { delay: 3 * 24 * 60 * 60 * 1000 });
-          console.log(`[Stripe Webhook] Scheduled Phase 7 upgrade drips and Google review request for client ${client.id}`);
+          console.warn('[Stripe Webhook] Blacklist deletion warning:', delErr.message);
         }
       }
 
+      // 2. Update Lead status to Partial Paid & set assessmentCredit = 250
+      if (targetLead) {
+        const existingQual = (typeof targetLead.qualificationData === 'object' && targetLead.qualificationData !== null) ? targetLead.qualificationData : {};
+        const updatedQual = { ...existingQual, assessmentCredit: 250, isNoShowPaid: true };
+
+        await prisma.lead.update({
+          where: { id: targetLead.id },
+          data: {
+            status: 'Partial Paid',
+            qualificationData: updatedQual
+          }
+        }).catch(err => console.error('[Stripe Webhook] Error updating lead Partial Paid:', err.message));
+      }
+
+      // 3. Update Client status if client exists
+      if (targetClient) {
+        await prisma.client.update({
+          where: { id: targetClient.id },
+          data: {
+            status: 'Partial Paid',
+            isBlocked: false
+          }
+        }).catch(err => console.error('[Stripe Webhook] Error updating client status:', err.message));
+      }
+
+      // 4. Construct Autofilled Re-Booking Link
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+      const activeLeadId = targetLead?.id || '';
+      const rebookLink = `${frontendUrl}/#/public/lead-form?leadId=${activeLeadId}&paid=true`;
+
+      // 5. Dispatch exact WhatsApp and Email template requested by user
+      const { sendCustomWhatsApp } = require('../services/chatbotService');
+      const { sendEmail } = require('../services/emailService');
+
+      const clientName = targetLead ? `${targetLead.firstName} ${targetLead.lastName}` : (targetClient ? `${targetClient.firstName} ${targetClient.lastName}` : 'Valued Client');
+      const recipientEmail = targetLead?.email || targetClient?.email;
+      const recipientPhone = targetLead?.phone || targetClient?.phone;
+
+      const messageBody = `Hello *${clientName}*,\n\nThank you! We have successfully received your *€250* Case Assessment Fee.\n\nPlease click the link below to select your new preferred meeting date and time (your details are pre-filled):\n🔗 ${rebookLink}\n\n_(Note: This €250 payment will be automatically deducted as a credit from your total Visa Package fee if you proceed!)_`;
+
+      if (recipientPhone) {
+        await sendCustomWhatsApp(recipientPhone, messageBody).catch(err => console.error('[Webhook Stripe] Failed to send re-book WA:', err.message));
+      }
+
+      if (recipientEmail) {
+        await sendEmail({
+          to: recipientEmail,
+          subject: 'Payment Confirmed - Select Your New Meeting Date & Time - AAA Business Consultancy',
+          html: `
+            <h3>Payment Confirmed</h3>
+            <p>Dear ${targetLead?.firstName || targetClient?.firstName || 'Client'},</p>
+            <p>Thank you! We have successfully received your <strong>€250</strong> Case Assessment Fee.</p>
+            <p>Please click the link below to select your new preferred meeting date and time (your details are pre-filled):</p>
+            <p><a href="${rebookLink}">Select Your New Preferred Meeting Date & Time</a></p>
+            <p><em>(Note: This €250 payment will be automatically deducted as a credit from your total Visa Package fee if you proceed!)</em></p>
+            <p>Thank you for choosing AAA Business Consultancy LLC.</p>
+          `
+        }).catch(err => console.error('[Webhook Stripe] Failed to send re-book email:', err.message));
+      }
+
+      if (targetClient && targetClient.id) {
+        const { remindersQueue } = require('../queues/queueSetup');
+        if (remindersQueue && remindersQueue.add) {
+          await remindersQueue.add('paid-assessment-upgrade-drip', { clientId: targetClient.id, dripIndex: 1 }, { delay: 3 * 24 * 60 * 60 * 1000 }).catch(() => {});
+          await remindersQueue.add('paid-assessment-upgrade-drip', { clientId: targetClient.id, dripIndex: 2 }, { delay: 7 * 24 * 60 * 60 * 1000 }).catch(() => {});
+          await remindersQueue.add('paid-assessment-upgrade-drip', { clientId: targetClient.id, dripIndex: 3 }, { delay: 10 * 24 * 60 * 60 * 1000 }).catch(() => {});
+          await remindersQueue.add('paid-assessment-upgrade-drip', { clientId: targetClient.id, dripIndex: 4 }, { delay: 14 * 24 * 60 * 60 * 1000 }).catch(() => {});
+          await remindersQueue.add('google-review-request-drip', { clientId: targetClient.id }, { delay: 3 * 24 * 60 * 60 * 1000 }).catch(() => {});
+        }
+      }
+
+      console.log(`[Stripe Webhook] Successfully processed No-Show fee payment of €250 for ${recipientEmail || recipientPhone}`);
     } catch (err) {
-      console.error('Error handling no_show_case_assessment webhook event:', err);
+      console.error('Error handling no-show payment webhook event:', err);
     }
   } else {
     // Enqueue payment event (We can handle this later in Payment State Machine)

@@ -146,26 +146,39 @@ const processPaymentEvent = async (event) => {
 
 module.exports = {
   processPaymentEvent,
-  createNoShowCheckoutSession: async (clientId) => {
-    const client = await prisma.client.findUnique({
-      where: { id: clientId }
-    });
+  createNoShowCheckoutSession: async (targetId) => {
+    let lead = null;
+    let client = null;
 
-    if (!client) throw new Error(`Client ${clientId} not found`);
-
-    // Create database payment entry
-    const payment = await prisma.payment.create({
-      data: {
-        clientId: client.id,
-        amount: 262.50, // €250 + 5% VAT
-        status: 'Pending',
-        paymentMethod: 'Stripe',
-        dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
+    if (targetId) {
+      lead = await prisma.lead.findUnique({ where: { id: targetId } }).catch(() => null);
+      if (!lead) {
+        client = await prisma.client.findUnique({ where: { id: targetId } }).catch(() => null);
       }
-    });
+    }
 
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
     const stripeSecret = process.env.STRIPE_SECRET_KEY || 'sk_test_mock';
     const stripe = require('stripe')(stripeSecret);
+
+    const targetLeadId = lead ? lead.id : null;
+    const targetClientId = client ? client.id : null;
+    const clientName = lead ? `${lead.firstName} ${lead.lastName}` : (client ? `${client.firstName} ${client.lastName}` : 'Valued Client');
+
+    // Create database payment entry if client exists, or track via metadata if lead
+    let paymentId = null;
+    if (client) {
+      const payment = await prisma.payment.create({
+        data: {
+          clientId: client.id,
+          amount: 250.00,
+          status: 'Pending',
+          paymentMethod: 'Stripe',
+          dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
+        }
+      });
+      paymentId = payment.id;
+    }
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
@@ -173,56 +186,79 @@ module.exports = {
         price_data: {
           currency: 'eur',
           product_data: {
-            name: 'Professional Case Assessment',
-            description: 'Includes One-to-One Case Review & Eligibility Evaluation. Deductible within 14 days. (5% VAT Included)',
+            name: 'Professional Case Assessment & Rescheduling Fee',
+            description: `One-to-One Case Review for ${clientName}. €250 credit deductible from Visa Package.`,
           },
-          unit_amount: 26250, // €262.50 in cents
+          unit_amount: 25000, // Flat €250.00 in cents
         },
         quantity: 1,
       }],
       mode: 'payment',
-      consent_collection: {
-        terms_of_service: 'required',
-      },
-      success_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/public/payment-success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/public/booking`,
+      success_url: `${frontendUrl}/#/public/payment-success?type=no_show&leadId=${targetLeadId || ''}&clientId=${targetClientId || ''}&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${frontendUrl}/#/public/lead-form`,
       metadata: {
-        clientId: client.id,
-        paymentId: payment.id,
-        type: 'no_show_case_assessment'
+        leadId: targetLeadId || '',
+        clientId: targetClientId || '',
+        paymentId: paymentId || '',
+        type: 'no_show_fee',
+        amount: '250'
       }
     });
 
-    // Update payment gateway ID
-    await prisma.payment.update({
-      where: { id: payment.id },
-      data: { gatewayId: session.id }
-    });
+    if (paymentId) {
+      await prisma.payment.update({
+        where: { id: paymentId },
+        data: { gatewayId: session.id }
+      });
+    }
 
     return session.url;
   },
 
-  checkAndApplyDeduction: async (clientId, basePrice) => {
-    // Find any paid case assessment payment in the last 14 days
-    const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
-    const paidAssessment = await prisma.payment.findFirst({
-      where: {
-        clientId: clientId,
-        status: 'Paid',
-        amount: 262.50, // The €250 + 5% VAT payment
-        createdAt: {
-          gte: fourteenDaysAgo
+  checkAndApplyDeduction: async (clientIdOrLeadId, basePrice) => {
+    let creditAmount = 0;
+
+    if (clientIdOrLeadId) {
+      // Check client or lead record for paid assessment credit
+      const client = await prisma.client.findUnique({
+        where: { id: clientIdOrLeadId },
+        select: { id: true, dependentsDetails: true, email: true, phone: true }
+      }).catch(() => null);
+
+      if (client) {
+        // Check if paid 250 payment exists or credit flagged
+        const paidPayment = await prisma.payment.findFirst({
+          where: {
+            clientId: client.id,
+            status: 'Paid',
+            amount: { gte: 250 }
+          }
+        });
+        if (paidPayment) {
+          creditAmount = 250;
         }
       }
-    });
 
-    if (paidAssessment) {
-      // Deduct €250 from basePrice
-      const finalPrice = Math.max(0, basePrice - 250);
+      if (!creditAmount) {
+        const lead = await prisma.lead.findUnique({
+          where: { id: clientIdOrLeadId },
+          select: { qualificationData: true, status: true }
+        }).catch(() => null);
+        if (lead) {
+          const qual = typeof lead.qualificationData === 'object' ? lead.qualificationData : {};
+          if (qual?.assessmentCredit === 250 || lead.status === 'Partial Paid') {
+            creditAmount = 250;
+          }
+        }
+      }
+    }
+
+    if (creditAmount > 0) {
+      const finalPrice = Math.max(0, basePrice - creditAmount);
       return {
         deducted: true,
         price: finalPrice,
-        creditApplied: 250
+        creditApplied: creditAmount
       };
     }
 

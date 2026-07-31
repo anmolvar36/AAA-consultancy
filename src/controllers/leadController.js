@@ -118,10 +118,15 @@ const createLead = async (req, res) => {
     const inactiveStatuses = ['Lost Lead', 'Spam', 'Cold Lead', 'No Show', 'Completed', 'Cancelled', 'Canceled', 'Refused'];
     
     if (latestLead && !inactiveStatuses.includes(latestLead.status)) {
-      return res.status(409).json({
-        code: 'DUPLICATE_LEAD',
-        message: 'You already have an active booking or application under this email/phone.'
-      });
+      const qual = (typeof latestLead.qualificationData === 'object' && latestLead.qualificationData !== null) ? latestLead.qualificationData : {};
+      const isPaidReschedule = qual?.assessmentCredit === 250 || qual?.isNoShowPaid || latestLead.status === 'Partial Paid' || req.body.leadId === latestLead.id;
+
+      if (!isPaidReschedule) {
+        return res.status(409).json({
+          code: 'DUPLICATE_LEAD',
+          message: 'You already have an active booking or application under this email/phone.'
+        });
+      }
     }
 
     let lead = null;

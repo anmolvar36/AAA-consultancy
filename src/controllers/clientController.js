@@ -474,31 +474,7 @@ const updateClientStatus = async (req, res) => {
   }
 };
 
-const selectPackage = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { packageId, status, visaStatus } = req.body;
 
-    if (req.user.role === 'client' && req.user.id !== id) {
-      return res.status(403).json({ message: 'Access denied. You cannot select packages for other clients.' });
-    }
-
-    const client = await prisma.client.update({
-      where: { id },
-      data: {
-        packageId: packageId || undefined,
-        documentUploadAllowed: true,
-        status: status || 'Payment Received',
-        visaStatus: visaStatus || 'Document Preparation'
-      }
-    });
-
-    res.json({ success: true, client });
-  } catch (error) {
-    console.error('Error selecting package:', error);
-    res.status(500).json({ message: 'Server error selecting package' });
-  }
-};
 
 const generateCredentials = async (req, res) => {
   try {

@@ -924,7 +924,7 @@ const getCommissionHistory = async (req, res) => {
   }
 };
 
-const createStripeCheckoutSession = async (req, res) => {
+const createInvoiceStripeCheckoutSession = async (req, res) => {
   try {
     const { paymentId, amount, clientName, clientId: bodyClientId } = req.body;
     const clientId = bodyClientId || req.user?.id;
@@ -999,6 +999,7 @@ module.exports = {
   updateCommissionRate,
   getCommissionsReport,
   createStripeCheckoutSession,
+  createInvoiceStripeCheckoutSession,
   verifyStripeCheckoutSession,
   getCommissionHistory
 };

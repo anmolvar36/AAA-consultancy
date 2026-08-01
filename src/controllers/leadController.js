@@ -243,53 +243,8 @@ const updateLeadStatus = async (req, res) => {
         console.error('[Blacklist] Failed to insert blacklist record:', dbErr.message);
       }
 
-      // Dispatch No-Show WhatsApp and Email notification
-      try {
-        const { sendCustomWhatsApp } = require('../services/chatbotService');
-        const { sendEmail } = require('../services/emailService');
-        const paymentService = require('../services/paymentService');
-        const clientName = `${lead.firstName} ${lead.lastName}`;
-
-        let paymentLink = '';
-        if (lead.clientId) {
-          // If already converted to Client -> Send Client Portal Link
-          paymentLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/portal/documents/${lead.clientId}`;
-        } else {
-          // If still a Lead -> Send Direct Public Payment Link
-          paymentLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/public/no-show-payment?leadId=${lead.id}&amount=250`;
-          try {
-            const checkoutUrl = await paymentService.createNoShowCheckoutSession(lead.id);
-            if (checkoutUrl) {
-              paymentLink = checkoutUrl;
-            }
-          } catch (stripeErr) {
-            console.error('[No Show LeadStatus] Failed to create Stripe checkout session:', stripeErr.message);
-          }
-        }
-
-        const noShowMsg = `Hello *${clientName}*,\n\nYour Free Eligibility Assessment has been automatically cancelled because you did not join the meeting within 10 minutes of the scheduled start time.\n\nDue to our no-show policy, we are unable to reschedule another Free Eligibility Assessment. You are welcome to review our services, packages, requirements, and application process by visiting the link below:\n\nServices & Packages: https://aaabusinessconsultancy.com/services-and-packages/\n\nIf you decide to proceed, we offer professional case assessment which is only *€250* (plus 5% VAT) including dedicated One-to-One Case Review. You can securely checkout here:\n🔗 ${paymentLink}`;
-
-        if (lead.phone) {
-          sendCustomWhatsApp(lead.phone, noShowMsg).catch(err => console.error('[BG-WA] No Show WA failed:', err.message));
-        }
-
-        if (lead.email) {
-          sendEmail({
-            to: lead.email,
-            subject: 'Your Spain Visa Consultation Cancellation - AAA Business Consultancy',
-            html: `
-              <h3>Consultation Cancelled - No Show</h3>
-              <p>Dear ${lead.firstName},</p>
-              <p>Your Free Eligibility Assessment has been automatically cancelled because you did not join the meeting within 10 minutes of the scheduled start time.</p>
-              <p>Due to our no-show policy, we are unable to reschedule another Free Eligibility Assessment. You are welcome to review our services and packages by visiting <a href="https://aaabusinessconsultancy.com/services-and-packages/">Services & Packages</a>.</p>
-              <p>If you decide to proceed, we offer professional case assessment which is <strong>€250</strong> including a dedicated One-to-One Case Review. You can checkout securely using this link: <a href="${paymentLink}">${paymentLink}</a></p>
-              <p>Thank you for your understanding.</p>
-            `
-          }).catch(err => console.error('[BG-Email] No Show email failed:', err.message));
-        }
-      } catch (notifyErr) {
-        console.error('[No Show LeadStatus] Error dispatching notifications:', notifyErr.message);
-      }
+      // Automated No-Show WhatsApp and Email notification disabled per user instruction
+      console.log(`[No Show LeadStatus] Lead ${lead.email} marked No Show. Automated message suppressed.`);
     } else if (lead.email || lead.phone) {
       // Automatically unblock/remove from blacklistedClient when status is changed away from No Show
       try {

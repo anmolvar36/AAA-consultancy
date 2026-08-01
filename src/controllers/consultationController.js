@@ -406,6 +406,33 @@ const updateOutcome = async (req, res) => {
       }
     }
 
+    // Auto-update associated lead status & unblock if status restored to Scheduled
+    if (status === 'Scheduled' && consultation.leadId) {
+      const leadRecord = await prisma.lead.update({
+        where: { id: consultation.leadId },
+        data: { status: 'Assessment Booked' }
+      }).catch(() => null);
+
+      if (leadRecord) {
+        try {
+          const cleanEmail = (leadRecord.email || '').toLowerCase().trim();
+          const cleanPhone = (leadRecord.phone || '').replace(/\D/g, '');
+          const matchConditions = [];
+          if (cleanEmail) matchConditions.push({ email: cleanEmail });
+          if (cleanPhone) matchConditions.push({ phone: { contains: cleanPhone.slice(-10) } });
+
+          if (matchConditions.length > 0) {
+            await prisma.blacklistedClient.deleteMany({
+              where: { OR: matchConditions }
+            });
+            console.log(`[Unblock Consultation] Removed from blacklist as consultation restored to Scheduled: ${leadRecord.email}`);
+          }
+        } catch (ubErr) {
+          console.error('[Unblock Consultation Error]:', ubErr.message);
+        }
+      }
+    }
+
     // Auto-update associated lead status if Cancelled
     if (consultation.leadId && status === 'Cancelled') {
       const updatedLead = await prisma.lead.update({

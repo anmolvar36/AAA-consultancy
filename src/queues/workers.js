@@ -478,42 +478,9 @@ const setupWorkers = () => {
 
   remindersWorker.on('failed', handleJobFailure);
 
-  // No-Show Enforcer Worker
+  // No-Show Enforcer Worker (Automated No-Show messages suppressed per configuration)
   const noShowEnforcerWorker = new Worker('no-show-enforcer', async (job) => {
-    console.log(`Processing no-show-enforcer job ${job.id}`);
-    const { email, phone, name, appointmentTime } = job.data;
-    
-    try {
-      if (phone) {
-        // Send No-Show Cancellation template to WhatsApp
-        await sendWhatsAppMessage({
-          to: phone,
-          templateName: 'consultation_no_show_cancelled',
-          components: [
-            {
-              type: 'body',
-              parameters: [
-                { type: 'text', text: name || 'Applicant' }
-              ]
-            }
-          ]
-        });
-      }
-
-      if (email) {
-        // Send No-Show Cancel email
-        await sendEmail({
-          to: email,
-          subject: 'No-Show Notice: Eligibility Assessment Cancelled',
-          html: `<p>Hello ${name || 'Applicant'},</p>
-                 <p>Your Free Eligibility Assessment has been cancelled because you did not join within 10 minutes of the scheduled time.</p>
-                 <p>Due to high demand, missed appointments cannot be rescheduled.</p>`
-        });
-      }
-    } catch (err) {
-      console.error(`Failed to enforce No-Show for job ${job.id}:`, err);
-      throw err;
-    }
+    console.log(`[No-Show Enforcer] Job ${job.id} processed for ${job.data.email || job.data.phone}. Automated message suppressed.`);
   }, { connection });
 
   noShowEnforcerWorker.on('failed', handleJobFailure);

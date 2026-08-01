@@ -306,7 +306,7 @@ const updateOutcome = async (req, res) => {
         const paymentService = require('../services/paymentService');
         const clientName = `${updatedLead.firstName} ${updatedLead.lastName}`;
         
-        let paymentLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/public/lead-form`;
+        let paymentLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/public/no-show-payment?leadId=${updatedLead.id}&amount=250`;
         try {
           const checkoutUrl = await paymentService.createNoShowCheckoutSession(updatedLead.id);
           if (checkoutUrl) {

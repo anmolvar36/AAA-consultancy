@@ -260,7 +260,7 @@ const setupWorkers = () => {
         }
 
         const clientName = `${lead.firstName} ${lead.lastName}`;
-        const checkoutLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/portal/documents/${lead.clientId || ''}`;
+        const checkoutLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/public/no-show-payment?leadId=${lead.id}&amount=250`;
         const { sendCustomWhatsApp } = require('../services/chatbotService');
 
         if (dripIndex === 2) {

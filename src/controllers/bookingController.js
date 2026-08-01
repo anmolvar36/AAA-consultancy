@@ -359,7 +359,7 @@ exports.createEligibilityBooking = async (req, res) => {
     if (delay > 0) {
       await noShowEnforcerQueue.add('enforce-no-show', {
         consultationId: consultation.id,
-        clientId: client.id,
+        clientId: client ? client.id : null,
       }, {
         jobId: `noshow-${consultation.id}`,
         delay: delay
@@ -404,7 +404,7 @@ _Note: Please join within 10 minutes of appointment time to avoid automatic canc
 
           await prisma.communicationLog.create({
             data: {
-              clientId: client.id,
+              clientId: client ? client.id : null,
               phone: phone,
               name: clientName,
               channel: 'WHATSAPP',
@@ -417,7 +417,7 @@ _Note: Please join within 10 minutes of appointment time to avoid automatic canc
           console.error('[NOTIFICATIONS] Failed to send WhatsApp confirmation:', waErr.message);
           await prisma.communicationLog.create({
             data: {
-              clientId: client.id,
+              clientId: client ? client.id : null,
               phone: phone,
               name: clientName,
               channel: 'WHATSAPP',

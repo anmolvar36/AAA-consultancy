@@ -277,62 +277,90 @@ const updateOutcome = async (req, res) => {
       })();
     }
 
-    // Auto-update associated lead status if No Show
-    if (consultation.leadId && (status === 'No Show' || status === 'No-Show' || status === 'NO_SHOW')) {
-      const updatedLead = await prisma.lead.update({
-        where: { id: consultation.leadId },
-        data: { status: 'No Show' }
-      });
+    // Auto-update associated lead/client status if No Show
+    if (status === 'No Show' || status === 'No-Show' || status === 'NO_SHOW') {
+      let targetLead = null;
+      let targetClient = null;
 
-      // Blacklist the lead details
-      try {
-        await prisma.blacklistedClient.upsert({
-          where: { email: updatedLead.email.toLowerCase() },
-          update: { phone: updatedLead.phone || '' },
-          create: {
-            email: updatedLead.email.toLowerCase(),
-            name: `${updatedLead.firstName} ${updatedLead.lastName}`,
-            phone: updatedLead.phone || ''
-          }
-        });
-        console.log(`[Blacklist] Blacklisted client on No Show status: ${updatedLead.email}`);
-      } catch (dbErr) {
-        console.error('[Blacklist] Failed to insert blacklist record:', dbErr.message);
+      if (consultation.leadId) {
+        targetLead = await prisma.lead.update({
+          where: { id: consultation.leadId },
+          data: { status: 'No Show' }
+        }).catch(() => null);
+      }
+      if (consultation.clientId) {
+        targetClient = await prisma.client.update({
+          where: { id: consultation.clientId },
+          data: { status: 'No Show' }
+        }).catch(() => null);
+      }
+
+      const emailToBlacklist = targetLead?.email || targetClient?.email;
+      const phoneToBlacklist = targetLead?.phone || targetClient?.phone;
+      const nameToBlacklist = targetLead ? `${targetLead.firstName} ${targetLead.lastName}` : (targetClient ? `${targetClient.firstName} ${targetClient.lastName}` : 'Client');
+
+      // Blacklist the details
+      if (emailToBlacklist) {
+        try {
+          await prisma.blacklistedClient.upsert({
+            where: { email: emailToBlacklist.toLowerCase() },
+            update: { phone: phoneToBlacklist || '' },
+            create: {
+              email: emailToBlacklist.toLowerCase(),
+              name: nameToBlacklist,
+              phone: phoneToBlacklist || ''
+            }
+          });
+          console.log(`[Blacklist] Blacklisted client on No Show status: ${emailToBlacklist}`);
+        } catch (dbErr) {
+          console.error('[Blacklist] Failed to insert blacklist record:', dbErr.message);
+        }
       }
 
       // Send No Show WhatsApp and Email (fire-and-forget — non-blocking)
       try {
         const { sendCustomWhatsApp } = require('../services/chatbotService');
         const paymentService = require('../services/paymentService');
-        const clientName = `${updatedLead.firstName} ${updatedLead.lastName}`;
-        
-        let paymentLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/public/no-show-payment?leadId=${updatedLead.id}&amount=250`;
-        try {
-          const checkoutUrl = await paymentService.createNoShowCheckoutSession(updatedLead.id);
-          if (checkoutUrl) {
-            paymentLink = checkoutUrl;
+        let paymentLink = '';
+        if (targetClient && targetClient.id) {
+          // If already converted to Client -> Send Client Portal Link
+          paymentLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/portal/documents/${targetClient.id}`;
+        } else if (targetLead && targetLead.id) {
+          // If still a Lead -> Send Direct Public Payment Link
+          paymentLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/public/no-show-payment?leadId=${targetLead.id}&amount=250`;
+          try {
+            const checkoutUrl = await paymentService.createNoShowCheckoutSession(targetLead.id);
+            if (checkoutUrl) {
+              paymentLink = checkoutUrl;
+            }
+          } catch (stripeErr) {
+            console.error('[No Show] Failed to create Stripe checkout session:', stripeErr.message);
           }
-        } catch (stripeErr) {
-          console.error('[No Show] Failed to create Stripe checkout session:', stripeErr.message);
+        } else {
+          paymentLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/public/no-show-payment?amount=250`;
         }
         
-        const noShowMsg = `Hello *${clientName}*,\n\nYour Free Eligibility Assessment has been automatically cancelled because you did not join the meeting within 10 minutes of the scheduled start time.\n\nDue to our no-show policy, we are unable to reschedule another Free Eligibility Assessment. You are welcome to review our services and packages here:\nhttps://aaabusinessconsultancy.com/services-and-packages/\n\nIf you decide to proceed, we offer professional case assessment which is *€250* including a dedicated One-to-One Case Review. You can checkout directly here:\n🔗 ${paymentLink}`;
+        const noShowMsg = `Hello *${nameToBlacklist}*,\n\nYour Free Eligibility Assessment has been automatically cancelled because you did not join the meeting within 10 minutes of the scheduled start time.\n\nDue to our no-show policy, we are unable to reschedule another Free Eligibility Assessment. You are welcome to review our services and packages here:\nhttps://aaabusinessconsultancy.com/services-and-packages/\n\nIf you decide to proceed, we offer professional case assessment which is *€250* including a dedicated One-to-One Case Review. You can checkout directly here:\n🔗 ${paymentLink}`;
         
-        sendCustomWhatsApp(updatedLead.phone, noShowMsg).catch(err => console.error('[BG-WA] No Show WA failed:', err.message));
+        if (phoneToBlacklist) {
+          sendCustomWhatsApp(phoneToBlacklist, noShowMsg).catch(err => console.error('[BG-WA] No Show WA failed:', err.message));
+        }
         
-        sendEmail({
-          to: updatedLead.email,
-          subject: 'Your Spain Visa Consultation Cancellation - AAA Business Consultancy',
-          html: `
-            <h3>Consultation Cancelled - No Show</h3>
-            <p>Dear ${updatedLead.firstName},</p>
-            <p>Your Free Eligibility Assessment has been automatically cancelled because you did not join the meeting within 10 minutes of the scheduled start time.</p>
-            <p>Due to our no-show policy, we are unable to reschedule another Free Eligibility Assessment. You are welcome to review our services and packages by visiting <a href="https://aaabusinessconsultancy.com/services-and-packages/">Services & Packages</a>.</p>
-            <p>If you decide to proceed, we offer professional case assessment which is <strong>€250</strong> including a dedicated One-to-One Case Review. You can checkout using this link: <a href="${paymentLink}">${paymentLink}</a></p>
-            <p>Thank you for your understanding.</p>
-          `
-        }).catch(err => console.error('[BG-Email] No Show email failed:', err.message));
-        console.log(`[Auto-NoShow] Dispatched no-show notifications to ${updatedLead.email}`);
+        if (emailToBlacklist) {
+          sendEmail({
+            to: emailToBlacklist,
+            subject: 'Your Spain Visa Consultation Cancellation - AAA Business Consultancy',
+            html: `
+              <h3>Consultation Cancelled - No Show</h3>
+              <p>Dear ${nameToBlacklist},</p>
+              <p>Your Free Eligibility Assessment has been automatically cancelled because you did not join the meeting within 10 minutes of the scheduled start time.</p>
+              <p>Due to our no-show policy, we are unable to reschedule another Free Eligibility Assessment. You are welcome to review our services and packages by visiting <a href="https://aaabusinessconsultancy.com/services-and-packages/">Services & Packages</a>.</p>
+              <p>If you decide to proceed, we offer professional case assessment which is <strong>€250</strong> including a dedicated One-to-One Case Review. You can checkout using this link: <a href="${paymentLink}">${paymentLink}</a></p>
+              <p>Thank you for your understanding.</p>
+            `
+          }).catch(err => console.error('[BG-Email] No Show email failed:', err.message));
+        }
+        console.log(`[Auto-NoShow] Dispatched no-show notifications to ${emailToBlacklist}`);
       } catch (err) {
         console.error('[Auto-NoShow] Failed to dispatch no-show notifications:', err.message);
       }

@@ -323,7 +323,7 @@ const setupWorkers = () => {
         }
 
         const clientName = `${client.firstName} ${client.lastName}`;
-        const checkoutLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/portal/documents/${client.id}`;
+        const checkoutLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/public/no-show-payment?clientId=${client.id}&amount=250`;
         const { sendCustomWhatsApp } = require('../services/chatbotService');
 
         let msg = '';

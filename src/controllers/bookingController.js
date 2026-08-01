@@ -189,13 +189,31 @@ exports.createEligibilityBooking = async (req, res) => {
       }
     }
 
-    // 4. Find or Create Client
+    // 4. Find Existing Client (do NOT create new Client prematurely)
     let client = await prisma.client.findUnique({
+      where: { email: email.toLowerCase() }
+    }).catch(() => null);
+
+    if (client) {
+      // Update device fingerprint & assignment if client already exists
+      await prisma.client.update({
+        where: { id: client.id },
+        data: {
+          deviceFingerprint: deviceFingerprint || undefined,
+          assignedToId: client.assignedToId || bestConsultantId,
+          preferableArea: preferableArea || undefined,
+          budget: budget || undefined
+        }
+      }).catch(() => null);
+    }
+
+    // 5. Find or Create Lead
+    let lead = await prisma.lead.findFirst({
       where: { email: email.toLowerCase() }
     });
 
-    if (!client) {
-      client = await prisma.client.create({
+    if (!lead) {
+      lead = await prisma.lead.create({
         data: {
           firstName,
           lastName,
@@ -206,37 +224,8 @@ exports.createEligibilityBooking = async (req, res) => {
           preferredLanguage,
           serviceType,
           applicantsCount,
-          deviceFingerprint,
-          preferableArea: preferableArea || null,
-          budget: budget || null,
-          sourceLanguage: sourceLanguage || null,
-          targetLanguage: targetLanguage || null,
-          wordCount: wordCount ? parseInt(wordCount, 10) : null,
-          status: 'Waiting for Assessment',
-          assignedToId: bestConsultantId
-        }
-      });
-    } else {
-      // Update device fingerprint & assignment if missing
-      await prisma.client.update({
-        where: { id: client.id },
-        data: {
-          deviceFingerprint: deviceFingerprint || undefined,
-          assignedToId: client.assignedToId || bestConsultantId,
-          preferableArea: preferableArea || undefined,
-          budget: budget || undefined
-        }
-      });
-    }
-
-    // 5. Create Lead (if doesn't exist for UI compatibility)
-    let lead = await prisma.lead.findUnique({ where: { clientId: client.id } });
-    if (!lead) {
-      lead = await prisma.lead.create({
-        data: {
-          firstName, lastName, email: email.toLowerCase(), phone, nationality, countryOfResidence,
-          preferredLanguage, serviceType, applicantsCount, status: 'Assessment Booked',
-          clientId: client.id,
+          status: 'Assessment Booked',
+          clientId: client ? client.id : null,
           assignedToId: bestConsultantId,
           preferableArea: preferableArea || null,
           budget: budget || null,
@@ -249,6 +238,7 @@ exports.createEligibilityBooking = async (req, res) => {
       lead = await prisma.lead.update({
         where: { id: lead.id },
         data: {
+          clientId: lead.clientId || (client ? client.id : undefined),
           assignedToId: lead.assignedToId || bestConsultantId,
           preferableArea: preferableArea || undefined,
           budget: budget || undefined,
@@ -259,14 +249,17 @@ exports.createEligibilityBooking = async (req, res) => {
       });
     }
 
-    // 6. Create Application Cycle
-    const appCycle = await prisma.applicationCycle.create({
-      data: {
-        clientId: client.id,
-        serviceType,
-        status: 'Assessment Booked'
-      }
-    });
+    // 6. Create Application Cycle if client exists
+    let appCycle = null;
+    if (client) {
+      appCycle = await prisma.applicationCycle.create({
+        data: {
+          clientId: client.id,
+          serviceType,
+          status: 'Assessment Booked'
+        }
+      }).catch(() => null);
+    }
 
     let meetingLink = null;
     let consultationStatus = 'Scheduled'; // Standardize to scheduled on fallback/mock as well
@@ -319,7 +312,7 @@ exports.createEligibilityBooking = async (req, res) => {
           type: 'new_booking',
           title: 'New Consultation Booked 📅',
           body: `New assessment booked for ${firstName} ${lastName} on ${date} at ${timeSlot}.`,
-          clientId: client.id
+          clientId: client ? client.id : null
         }
       });
     } catch (notifErr) {

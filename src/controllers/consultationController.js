@@ -158,11 +158,51 @@ const updateOutcome = async (req, res) => {
         });
         console.log(`[Outcome Status Trigger] Lead ${consultation.leadId} status updated to: ${newLeadStatus}`);
 
-        // If Eligible, auto-send appropriate WhatsApp message based on service type
-        if (newLeadStatus === 'Eligible' && updatedLead.clientId) {
-          const clientRecord = await prisma.client.findUnique({
-            where: { id: updatedLead.clientId }
-          });
+        // If Eligible, convert Lead to Client (if not already converted) & send Portal link
+        if (newLeadStatus === 'Eligible') {
+          let clientRecord = null;
+          if (updatedLead.clientId) {
+            clientRecord = await prisma.client.findUnique({
+              where: { id: updatedLead.clientId }
+            }).catch(() => null);
+          }
+
+          // If no Client record exists yet, convert Lead -> Client now
+          if (!clientRecord) {
+            try {
+              const bcrypt = require('bcrypt');
+              const crypto = require('crypto');
+              const generatedPassword = crypto.randomBytes(8).toString('hex');
+              const salt = await bcrypt.genSalt(10);
+              const hashedPassword = await bcrypt.hash(generatedPassword, salt);
+
+              clientRecord = await prisma.client.create({
+                data: {
+                  firstName: updatedLead.firstName,
+                  lastName: updatedLead.lastName,
+                  email: updatedLead.email.toLowerCase(),
+                  phone: updatedLead.phone,
+                  nationality: updatedLead.nationality,
+                  countryOfResidence: updatedLead.countryOfResidence,
+                  preferredLanguage: updatedLead.preferredLanguage,
+                  serviceType: updatedLead.serviceType,
+                  password: hashedPassword,
+                  isTemporaryPassword: true,
+                  status: 'Eligible',
+                  assignedToId: updatedLead.assignedToId
+                }
+              });
+
+              await prisma.lead.update({
+                where: { id: updatedLead.id },
+                data: { clientId: clientRecord.id }
+              });
+              console.log(`[Lead Conversion] Successfully converted Lead ${updatedLead.id} to Client ${clientRecord.id} on Eligible status.`);
+            } catch (convErr) {
+              console.error('[Lead Conversion Error]:', convErr.message);
+            }
+          }
+
           if (clientRecord && clientRecord.phone) {
             try {
               const { sendCustomWhatsApp } = require('../services/chatbotService');

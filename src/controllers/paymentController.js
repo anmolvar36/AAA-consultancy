@@ -718,12 +718,17 @@ const createStripeCheckoutSession = async (req, res) => {
           transactionId: `TXN_MOCK_${payment.id}`
         }
       });
+      let newStatus = 'Payment Completed';
+      if (packageId === 'OPTION_A' || packageId === 'opt_a' || Number(amount) === 250 || Number(amount) === 262.50) {
+        newStatus = 'Partially Paid';
+      }
+
       const client = await prisma.client.update({
         where: { id: clientId },
         data: {
           packageId: packageId || undefined,
           documentUploadAllowed: true,
-          status: 'Payment Received',
+          status: newStatus,
           visaStatus: 'Document Preparation'
         }
       });
@@ -825,11 +830,16 @@ const verifyStripeCheckoutSession = async (req, res) => {
             }
           });
 
+          let newStatus = 'Payment Completed';
+          if (payment.amount === 250 || payment.amount === 262.50) {
+            newStatus = 'Partially Paid';
+          }
+
           await prisma.client.update({
             where: { id: payment.clientId },
             data: {
               documentUploadAllowed: true,
-              status: 'Payment Received',
+              status: newStatus,
               visaStatus: 'Document Preparation'
             }
           });
@@ -873,12 +883,17 @@ const verifyStripeCheckoutSession = async (req, res) => {
             }
           });
 
+          let newStatus = 'Payment Completed';
+          if (packageId === 'OPTION_A' || packageId === 'opt_a' || payment.amount === 250 || payment.amount === 262.50) {
+            newStatus = 'Partially Paid';
+          }
+
           const client = await prisma.client.update({
             where: { id: metadataClientId || payment.clientId },
             data: {
               packageId: packageId || undefined,
               documentUploadAllowed: true,
-              status: 'Payment Received',
+              status: newStatus,
               visaStatus: 'Document Preparation'
             }
           });

@@ -558,10 +558,32 @@ async function syncLeadConsultation(leadId) {
       where: { leadId: lead.id }
     });
 
-    const consultationStatus = 'Pending Acceptance';
+    const zoomService = require('../services/zoomService');
+    const { sendCustomWhatsApp } = require('../services/chatbotService');
+    const { sendEmail } = require('../services/emailService');
+
     const fallbackDate = lead.formSubmittedAt ? new Date(lead.formSubmittedAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
     const meetingDate = lead.meetingPreferredDate || fallbackDate;
     const meetingTime = lead.meetingPreferredTime || '09:00';
+
+    let meetingLink = `https://zoom.us/j/${Math.floor(Math.random() * 9000000000 + 1000000000)}`;
+    if (zoomService && zoomService.isConfigured) {
+      try {
+        const timeStr = meetingTime && meetingTime.includes(':') ? meetingTime : '09:00';
+        const dateObj = new Date(`${meetingDate}T${timeStr}`);
+        const startTimeISO = !isNaN(dateObj.getTime()) ? dateObj.toISOString() : new Date().toISOString();
+        const zoomMeeting = await zoomService.createZoomMeeting({
+          topic: `Eligibility Assessment for ${lead.firstName} ${lead.lastName}`,
+          startTime: startTimeISO,
+          durationMinutes: Number(duration)
+        });
+        if (zoomMeeting && zoomMeeting.joinUrl) {
+          meetingLink = zoomMeeting.joinUrl;
+        }
+      } catch (zErr) {
+        console.warn('[SyncConsultation] Zoom generation error:', zErr.message);
+      }
+    }
 
     if (!consultation) {
       consultation = await prisma.consultation.create({
@@ -569,28 +591,75 @@ async function syncLeadConsultation(leadId) {
           date: meetingDate,
           timeSlot: meetingTime,
           durationMinutes: Number(duration),
-          status: consultationStatus,
+          status: 'Scheduled',
           leadId: lead.id,
           consultantId: lead.assignedToId,
           internalNotes: lead.meetingNotes || '',
-          meetingLink: null  // Generated when agent accepts
+          meetingLink: meetingLink
         }
       });
-      console.log(`Auto-created consultation (ID: ${consultation.id}) for Lead: ${lead.id} — awaiting agent acceptance`);
-    } else if (consultation.status === 'Pending Acceptance') {
-      // Only update date/time/agent if still pending — don't overwrite an accepted meeting
+      console.log(`Auto-created Scheduled consultation (ID: ${consultation.id}) for Lead: ${lead.id}`);
+    } else {
       consultation = await prisma.consultation.update({
         where: { id: consultation.id },
         data: {
           date: meetingDate,
           timeSlot: meetingTime,
+          status: 'Scheduled',
           consultantId: lead.assignedToId,
+          meetingLink: meetingLink,
           internalNotes: lead.meetingNotes || consultation.internalNotes || ''
         }
       });
-      console.log(`Updated pending consultation (ID: ${consultation.id}) for Lead: ${lead.id}`);
     }
-    // Note: WhatsApp, Email & Reminders are sent ONLY when agent accepts — see respondToConsultation()
+
+    // Update Lead status to 'Meeting Scheduled'
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: { status: 'Meeting Scheduled' }
+    }).catch(() => null);
+
+    // Send instant WhatsApp & Email confirmation to customer
+    const clientName = `${lead.firstName} ${lead.lastName}`;
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    const rescheduleUrl = `${frontendUrl}/#/public/lead-form?reschedule=true&consultationId=${consultation.id}`;
+    const cancelUrl = `${frontendUrl}/#/public/lead-form?cancel=true&consultationId=${consultation.id}`;
+    const packagesUrl = "https://aaabusinessconsultancy.com/services-and-packages/";
+
+    const waMsg = `✈️ *Spain Visa Consultation Confirmed!*
+
+Dear *${clientName}*,
+
+Your Spain Visa Eligibility Assessment is confirmed.
+
+📅 *Date:* ${meetingDate}
+⏰ *Time:* ${meetingTime} (UTC)
+🔗 *Zoom Join Link:* ${meetingLink}
+
+─────────────
+👇 *Quick Action Links:*
+• 🔄 *Reschedule Booking:* ${rescheduleUrl}
+• ❌ *Cancel Booking:* ${cancelUrl}
+• 📦 *View Visa Packages:* ${packagesUrl}
+
+_Note: Please join within 10 minutes of appointment time to avoid automatic cancellation._`;
+
+    if (lead.phone) {
+      sendCustomWhatsApp(lead.phone, waMsg).catch(err => console.error('[SyncConsultation WA Error]:', err.message));
+    }
+    if (lead.email) {
+      sendEmail({
+        to: lead.email,
+        subject: 'Spain Visa Consultation Confirmed - AAA Business Consultancy',
+        html: `
+          <h3>Spain Visa Consultation Confirmed ✈️</h3>
+          <p>Dear ${lead.firstName},</p>
+          <p>Your Spain Visa Eligibility Assessment is confirmed.</p>
+          <p><strong>Date:</strong> ${meetingDate}<br><strong>Time:</strong> ${meetingTime} (UTC)<br><strong>Zoom Join Link:</strong> <a href="${meetingLink}">${meetingLink}</a></p>
+          <p>Thank you for choosing AAA Business Consultancy!</p>
+        `
+      }).catch(err => console.error('[SyncConsultation Email Error]:', err.message));
+    }
 
   } catch (error) {
     console.error('Error in syncLeadConsultation:', error);

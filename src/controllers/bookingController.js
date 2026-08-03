@@ -224,7 +224,7 @@ exports.createEligibilityBooking = async (req, res) => {
           preferredLanguage,
           serviceType,
           applicantsCount,
-          status: 'Assessment Booked',
+          status: 'Meeting Scheduled',
           clientId: client ? client.id : null,
           assignedToId: bestConsultantId,
           preferableArea: preferableArea || null,
@@ -238,6 +238,7 @@ exports.createEligibilityBooking = async (req, res) => {
       lead = await prisma.lead.update({
         where: { id: lead.id },
         data: {
+          status: 'Meeting Scheduled',
           clientId: lead.clientId || (client ? client.id : undefined),
           assignedToId: lead.assignedToId || bestConsultantId,
           preferableArea: preferableArea || undefined,

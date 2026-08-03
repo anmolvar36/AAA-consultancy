@@ -361,13 +361,13 @@ const updateOutcome = async (req, res) => {
       console.log(`[Auto-NoShow] Consultation marked No Show for ${emailToBlacklist}. Automated message suppressed.`);
     }
 
-    // Auto-update associated lead status & unblock if status restored to Scheduled or Assessment Booked
-    if ((status === 'Scheduled' || status === 'Assessment Booked') && (consultation.leadId || consultation.clientId)) {
+    // Auto-update associated lead status & unblock if status restored
+    if ((status === 'Scheduled' || status === 'Assessment Booked' || status === 'New Lead') && (consultation.leadId || consultation.clientId)) {
       let leadRecord = null;
       if (consultation.leadId) {
         leadRecord = await prisma.lead.update({
           where: { id: consultation.leadId },
-          data: { status: 'Assessment Booked' }
+          data: { status: 'New Lead' }
         }).catch(() => null);
       } else if (consultation.clientId) {
         leadRecord = await prisma.lead.findFirst({
@@ -376,7 +376,7 @@ const updateOutcome = async (req, res) => {
         if (leadRecord) {
           await prisma.lead.update({
             where: { id: leadRecord.id },
-            data: { status: 'Assessment Booked' }
+            data: { status: 'New Lead' }
           }).catch(() => null);
         }
       }

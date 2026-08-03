@@ -103,6 +103,14 @@ startDiscountScheduler();
 const { startReminderScheduler } = require('./services/reminderScheduler');
 startReminderScheduler();
 
+// Clean up No-Show templates from DB on startup
+const prisma = require('./config/db');
+prisma.template.deleteMany({
+  where: { OR: [{ id: 'consultation_no_show_cancelled' }, { id: { contains: 'no_show', mode: 'insensitive' } }] }
+}).then((res) => {
+  if (res.count > 0) console.log(`[DB Cleanup] Removed ${res.count} No-Show template records from Database.`);
+}).catch(err => console.warn('[DB Cleanup Warning]:', err.message));
+
 // Start Server
 const PORT = process.env.PORT || 5000;
 

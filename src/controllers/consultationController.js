@@ -361,12 +361,25 @@ const updateOutcome = async (req, res) => {
       console.log(`[Auto-NoShow] Consultation marked No Show for ${emailToBlacklist}. Automated message suppressed.`);
     }
 
-    // Auto-update associated lead status & unblock if status restored to Scheduled
-    if (status === 'Scheduled' && consultation.leadId) {
-      const leadRecord = await prisma.lead.update({
-        where: { id: consultation.leadId },
-        data: { status: 'Assessment Booked' }
-      }).catch(() => null);
+    // Auto-update associated lead status & unblock if status restored to Scheduled or Assessment Booked
+    if ((status === 'Scheduled' || status === 'Assessment Booked') && (consultation.leadId || consultation.clientId)) {
+      let leadRecord = null;
+      if (consultation.leadId) {
+        leadRecord = await prisma.lead.update({
+          where: { id: consultation.leadId },
+          data: { status: 'Assessment Booked' }
+        }).catch(() => null);
+      } else if (consultation.clientId) {
+        leadRecord = await prisma.lead.findFirst({
+          where: { clientId: consultation.clientId }
+        }).catch(() => null);
+        if (leadRecord) {
+          await prisma.lead.update({
+            where: { id: leadRecord.id },
+            data: { status: 'Assessment Booked' }
+          }).catch(() => null);
+        }
+      }
 
       if (leadRecord) {
         try {
@@ -380,7 +393,7 @@ const updateOutcome = async (req, res) => {
             await prisma.blacklistedClient.deleteMany({
               where: { OR: matchConditions }
             });
-            console.log(`[Unblock Consultation] Removed from blacklist as consultation restored to Scheduled: ${leadRecord.email}`);
+            console.log(`[Unblock Consultation] Removed from blacklist as consultation restored: ${leadRecord.email}`);
 
             // Send Unblock Pre-filled Reschedule Link Notification via WhatsApp & Email
             try {

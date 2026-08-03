@@ -246,16 +246,7 @@ async function sendCustomWhatsApp(phone, messageBody) {
     cleanPhone = '+' + cleanPhone;
   }
 
-  // Sandbox Mode Whitelist Filter (Defaults to Active with +917047687998 & +918770145658)
-  const isTestMode = process.env.TEST_MODE === 'true'; // Only block if TEST_MODE is explicitly enabled
-  if (isTestMode) {
-    const whitelistStr = process.env.TEST_PHONES || '+917047687998,+971524350123,+971524360123,+971566952566,+918770145658';
-    const testPhones = whitelistStr.split(',').map(p => p.trim());
-    if (!testPhones.includes(cleanPhone)) {
-      console.log(`[TEST MODE] Blocked automated outbound WhatsApp message to ${cleanPhone} (not whitelisted)`);
-      return; // Drop the message completely
-    }
-  }
+  // Outbound custom WhatsApp messages allowed for all phone numbers
 
   const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
   const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;

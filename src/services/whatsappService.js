@@ -31,6 +31,12 @@ if (isConfigured) {
  * @returns {Promise<{success: boolean, messageId?: string, dryRun?: boolean}>}
  */
 exports.sendWhatsAppMessage = async ({ to, templateName, languageCode = 'en', components = [] }) => {
+  // Hard suppression for No-Show templates per user requirement
+  if (templateName === 'consultation_no_show_cancelled' || (templateName || '').includes('no_show')) {
+    console.log(`[NO-SHOW SUPPRESSED] Hard-blocked automated template "${templateName}" to ${to}. Message dropped.`);
+    return { success: true, messageId: 'blocked-noshow', dryRun: true };
+  }
+
   // Clean phone number format for Twilio: must start with '+' and be prefixed with 'whatsapp:'
   let cleanTo = to.trim();
   if (cleanTo.startsWith('whatsapp:')) {

@@ -353,18 +353,8 @@ exports.createEligibilityBooking = async (req, res) => {
     const meetingStart = new Date(`${date} ${timeSlot}`); // Naive parsing
     const tenMinsAfterStart = new Date(meetingStart.getTime() + 10 * 60000);
 
-    // Schedule NO-SHOW enforcer precisely at meetingStart + 10 mins
-    const delay = tenMinsAfterStart.getTime() - Date.now();
-
-    if (delay > 0) {
-      await noShowEnforcerQueue.add('enforce-no-show', {
-        consultationId: consultation.id,
-        clientId: client ? client.id : null,
-      }, {
-        jobId: `noshow-${consultation.id}`,
-        delay: delay
-      });
-    }
+    // Automated NO-SHOW enforcer queue disabled per user instruction
+    console.log(`[Booking] Automated No-Show enforcer queue disabled for consultation ${consultation.id}`);
 
     // Asynchronously trigger instant Email and WhatsApp confirmations + reminders
     (async () => {

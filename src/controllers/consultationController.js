@@ -381,6 +381,37 @@ const updateOutcome = async (req, res) => {
               where: { OR: matchConditions }
             });
             console.log(`[Unblock Consultation] Removed from blacklist as consultation restored to Scheduled: ${leadRecord.email}`);
+
+            // Send Unblock Pre-filled Reschedule Link Notification via WhatsApp & Email
+            try {
+              const { sendCustomWhatsApp } = require('../services/chatbotService');
+              const { sendEmail } = require('../services/emailService');
+              const clientName = `${leadRecord.firstName} ${leadRecord.lastName}`;
+              const rescheduleUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/public/lead-form?id=${leadRecord.id}&reschedule=true`;
+
+              const unblockMsg = `Hello *${clientName}*,\n\nGreat news! Your Spain Visa Eligibility Assessment booking has been *restored & unblocked* by our team. 🇪🇸\n\nPlease choose your preferred date and time to select your new consultation meeting:\n🔗 ${rescheduleUrl}`;
+
+              if (leadRecord.phone) {
+                sendCustomWhatsApp(leadRecord.phone, unblockMsg).catch(err => console.error('[Unblock WA Error]:', err.message));
+              }
+              if (leadRecord.email) {
+                sendEmail({
+                  to: leadRecord.email,
+                  subject: 'Your Spain Visa Consultation Booking Has Been Restored - AAA Business Consultancy',
+                  html: `
+                    <h3>Consultation Booking Restored ✈️</h3>
+                    <p>Dear ${leadRecord.firstName},</p>
+                    <p>Great news! Your Spain Visa Eligibility Assessment booking has been <strong>restored and unblocked</strong> by our team.</p>
+                    <p>Please click the link below to select your new consultation meeting date and time slot (your contact details are pre-filled):</p>
+                    <p><a href="${rescheduleUrl}" style="background-color: #1a56db; color: white; padding: 10px 18px; text-decoration: none; border-radius: 5px; font-weight: bold;">Select New Meeting Slot</a></p>
+                    <p>Or copy this link into your browser: <br><a href="${rescheduleUrl}">${rescheduleUrl}</a></p>
+                    <p>Thank you for choosing AAA Business Consultancy!</p>
+                  `
+                }).catch(err => console.error('[Unblock Email Error]:', err.message));
+              }
+            } catch (notifyErr) {
+              console.error('[Unblock Notification Error]:', notifyErr.message);
+            }
           }
         } catch (ubErr) {
           console.error('[Unblock Consultation Error]:', ubErr.message);

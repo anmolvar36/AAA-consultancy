@@ -228,23 +228,25 @@ const updateLeadStatus = async (req, res) => {
     });
 
     if (status === 'No Show' || status === 'No-Show') {
-      try {
-        await prisma.blacklistedClient.upsert({
-          where: { email: lead.email.toLowerCase() },
-          update: { phone: lead.phone || '' },
-          create: {
-            email: lead.email.toLowerCase(),
-            name: `${lead.firstName} ${lead.lastName}`,
-            phone: lead.phone || ''
-          }
-        });
-        console.log(`[Blacklist] Blacklisted client on No Show status: ${lead.email}`);
-      } catch (dbErr) {
-        console.error('[Blacklist] Failed to insert blacklist record:', dbErr.message);
+      if (lead && lead.email) {
+        try {
+          await prisma.blacklistedClient.upsert({
+            where: { email: lead.email.toLowerCase() },
+            update: { phone: lead.phone || '' },
+            create: {
+              email: lead.email.toLowerCase(),
+              name: `${lead.firstName || ''} ${lead.lastName || ''}`.trim(),
+              phone: lead.phone || ''
+            }
+          });
+          console.log(`[Blacklist] Blacklisted client on No Show status: ${lead.email}`);
+        } catch (dbErr) {
+          console.error('[Blacklist] Failed to insert blacklist record:', dbErr.message);
+        }
       }
 
       // Automated No-Show WhatsApp and Email notification disabled per user instruction
-      console.log(`[No Show LeadStatus] Lead ${lead.email} marked No Show. Automated message suppressed.`);
+      console.log(`[No Show LeadStatus] Lead ${lead?.email || lead?.id} marked No Show. Automated message suppressed.`);
     } else if (lead.email || lead.phone) {
       // Automatically unblock/remove from blacklistedClient when status is changed away from No Show
       try {
@@ -259,6 +261,37 @@ const updateLeadStatus = async (req, res) => {
             where: { OR: matchConditions }
           });
           console.log(`[Unblock] Removed from blacklist as status changed to ${status}: ${lead.email}`);
+
+          // Send Unblock Pre-filled Reschedule Link Notification via WhatsApp & Email
+          try {
+            const { sendCustomWhatsApp } = require('../services/chatbotService');
+            const { sendEmail } = require('../services/emailService');
+            const clientName = `${lead.firstName} ${lead.lastName}`;
+            const rescheduleUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/#/public/lead-form?id=${lead.id}&reschedule=true`;
+
+            const unblockMsg = `Hello *${clientName}*,\n\nGreat news! Your Spain Visa Eligibility Assessment booking has been *restored & unblocked* by our team. 🇪🇸\n\nPlease choose your preferred date and time to select your new consultation meeting:\n🔗 ${rescheduleUrl}`;
+
+            if (lead.phone) {
+              sendCustomWhatsApp(lead.phone, unblockMsg).catch(err => console.error('[Unblock WA Error]:', err.message));
+            }
+            if (lead.email) {
+              sendEmail({
+                to: lead.email,
+                subject: 'Your Spain Visa Consultation Booking Has Been Restored - AAA Business Consultancy',
+                html: `
+                  <h3>Consultation Booking Restored ✈️</h3>
+                  <p>Dear ${lead.firstName},</p>
+                  <p>Great news! Your Spain Visa Eligibility Assessment booking has been <strong>restored and unblocked</strong> by our team.</p>
+                  <p>Please click the link below to select your new consultation meeting date and time slot (your contact details are pre-filled):</p>
+                  <p><a href="${rescheduleUrl}" style="background-color: #1a56db; color: white; padding: 10px 18px; text-decoration: none; border-radius: 5px; font-weight: bold;">Select New Meeting Slot</a></p>
+                  <p>Or copy this link into your browser: <br><a href="${rescheduleUrl}">${rescheduleUrl}</a></p>
+                  <p>Thank you for choosing AAA Business Consultancy!</p>
+                `
+              }).catch(err => console.error('[Unblock Email Error]:', err.message));
+            }
+          } catch (notifyErr) {
+            console.error('[Unblock Notification Error]:', notifyErr.message);
+          }
         }
       } catch (dbErr) {
         console.error('[Unblock] Failed to remove blacklist record:', dbErr.message);

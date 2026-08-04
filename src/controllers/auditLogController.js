@@ -178,29 +178,33 @@ const getCaseTimeline = async (req, res) => {
     }
 
     // 4. Fetch Communication Logs (by clientId, phone, or email)
-    const commWhere = [];
-    if (effectiveClientId) commWhere.push({ clientId: effectiveClientId });
-    if (targetPhone) commWhere.push({ phone: targetPhone });
+    try {
+      const commWhere = [];
+      if (effectiveClientId) commWhere.push({ clientId: effectiveClientId });
+      if (targetPhone) commWhere.push({ phone: targetPhone });
 
-    if (commWhere.length > 0) {
-      const commLogs = await prisma.communicationLog.findMany({
-        where: { OR: commWhere },
-        include: { respondedByUser: { select: { fullName: true, role: true } } },
-        orderBy: { createdAt: 'desc' },
-        take: 50
-      });
-
-      commLogs.forEach(comm => {
-        timelineEvents.push({
-          id: `comm-${comm.id}`,
-          timestamp: comm.createdAt,
-          type: `COMM_${comm.channel}_${comm.direction}`,
-          actorName: comm.direction === 'INBOUND' ? (comm.name || 'Client') : (comm.respondedByUser?.fullName || 'System Automated'),
-          actorRole: comm.direction === 'INBOUND' ? 'client' : (comm.respondedByUser?.role || 'system'),
-          description: `[${comm.channel}] ${comm.direction === 'INBOUND' ? 'Received message' : 'Sent message'}: "${comm.content.substring(0, 120)}${comm.content.length > 120 ? '...' : ''}"`,
-          category: 'COMMUNICATION'
+      if (commWhere.length > 0) {
+        const commLogs = await prisma.communicationLog.findMany({
+          where: { OR: commWhere },
+          include: { respondedByUser: { select: { fullName: true, role: true } } },
+          orderBy: { createdAt: 'desc' },
+          take: 50
         });
-      });
+
+        commLogs.forEach(comm => {
+          timelineEvents.push({
+            id: `comm-${comm.id}`,
+            timestamp: comm.createdAt,
+            type: `COMM_${comm.channel}_${comm.direction}`,
+            actorName: comm.direction === 'INBOUND' ? (comm.name || 'Client') : (comm.respondedByUser?.fullName || 'System Automated'),
+            actorRole: comm.direction === 'INBOUND' ? 'client' : (comm.respondedByUser?.role || 'system'),
+            description: `[${comm.channel}] ${comm.direction === 'INBOUND' ? 'Received message' : 'Sent message'}: "${(comm.content || '').substring(0, 120)}${(comm.content || '').length > 120 ? '...' : ''}"`,
+            category: 'COMMUNICATION'
+          });
+        });
+      }
+    } catch (commErr) {
+      console.warn('[CommunicationLog Query Warning]:', commErr.message);
     }
 
     // 5. Deduplicate events by ID and sort chronologically (Newest first)

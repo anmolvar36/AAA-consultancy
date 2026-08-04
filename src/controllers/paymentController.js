@@ -301,7 +301,7 @@ const getRefundRequests = async (req, res) => {
     res.json(mapped);
   } catch (error) {
     console.error('Error fetching refunds:', error);
-    res.status(500).json({ message: 'Server error fetching refunds' });
+    res.json([]);
   }
 };
 

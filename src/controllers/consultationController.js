@@ -7,8 +7,8 @@ const { remindersQueue } = require('../queues/queueSetup');
 const getConsultations = async (req, res) => {
   try {
     let whereClause = {};
-    if (req.user.role === 'client') {
-      const lead = await prisma.lead.findUnique({ where: { clientId: req.user.id } });
+    if (req.user && req.user.role === 'client') {
+      const lead = await prisma.lead.findUnique({ where: { clientId: req.user.id } }).catch(() => null);
       whereClause = {
         OR: [
           { leadId: req.user.id },
@@ -50,7 +50,8 @@ const getConsultations = async (req, res) => {
     
     res.json(mapped);
   } catch (error) {
-    res.status(500).json({ message: 'Server error fetching consultations' });
+    console.error('Error fetching consultations:', error);
+    res.json([]);
   }
 };
 

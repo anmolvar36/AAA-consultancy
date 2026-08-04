@@ -217,7 +217,8 @@ const getCompanySettings = async (req, res) => {
     }
     res.json(settings);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('Error fetching company settings:', error);
+    res.json({ companyName: 'AAA Business Consultancy LLC', phone: '+971 50 955 4142', email: 'info@aaabusinessconsultancy.com' });
   }
 };
 
@@ -360,7 +361,12 @@ const getPackages = async (req, res) => {
     }
     res.json(packages);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('Error fetching packages:', error);
+    res.json([
+      { id: 'opt_a', code: 'full_process', name: 'OPTION A: FULL PROCESSING PACKAGE', price: 3500, additionalApplicantPrice: 500, isRecommended: false, isRefundable: true, includes: [] },
+      { id: 'opt_b', code: 'premium', name: 'OPTION B: PREMIUM PACKAGE', price: 4750, additionalApplicantPrice: 750, isRecommended: true, isRefundable: true, includes: [] },
+      { id: 'opt_c', code: 'relocation', name: 'OPTION C: ADMINISTRATIVE RELOCATION PACKAGE', price: 1750, additionalApplicantPrice: 500, isRecommended: false, isRefundable: false, includes: [] }
+    ]);
   }
 };
 

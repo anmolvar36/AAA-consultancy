@@ -120,6 +120,27 @@ const prisma = require('./config/db');
     console.log('[DB Auto-Migration] Added missing isRefundable column to relocation_packages table.');
   } catch (e) {}
 
+  const companySettingCols = [
+    `refundGuaranteePercentage DOUBLE NOT NULL DEFAULT 50`,
+    `enableStripeRefunds TINYINT(1) NOT NULL DEFAULT 1`,
+    `enableManualBankPayouts TINYINT(1) NOT NULL DEFAULT 1`,
+    `lockClientRefundTab TINYINT(1) NOT NULL DEFAULT 1`,
+    `requireMeetingAcceptance TINYINT(1) NOT NULL DEFAULT 1`,
+    `customRefundTerms TEXT NULL`,
+    `customizationSettings JSON NULL`,
+    `swornTranslationRates JSON NULL`,
+    `leadStages JSON NULL`,
+    `recordingStorage VARCHAR(191) NOT NULL DEFAULT 'cloud'`,
+    `autoAssignConsultant TINYINT(1) NOT NULL DEFAULT 1`
+  ];
+
+  for (const colDef of companySettingCols) {
+    try {
+      await prisma.$executeRawUnsafe(`ALTER TABLE company_settings ADD COLUMN ${colDef};`);
+      console.log(`[DB Auto-Migration] Added missing column to company_settings table: ${colDef.split(' ')[0]}`);
+    } catch (e) {}
+  }
+
   try {
     const res = await prisma.template.deleteMany({
       where: { OR: [{ id: 'consultation_no_show_cancelled' }, { id: { contains: 'no_show', mode: 'insensitive' } }] }

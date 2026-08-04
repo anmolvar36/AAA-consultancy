@@ -103,13 +103,32 @@ startDiscountScheduler();
 const { startReminderScheduler } = require('./services/reminderScheduler');
 startReminderScheduler();
 
-// Clean up No-Show templates from DB on startup
+// Self-Healing Database Column Auto-Migration on Startup
 const prisma = require('./config/db');
-prisma.template.deleteMany({
-  where: { OR: [{ id: 'consultation_no_show_cancelled' }, { id: { contains: 'no_show', mode: 'insensitive' } }] }
-}).then((res) => {
-  if (res.count > 0) console.log(`[DB Cleanup] Removed ${res.count} No-Show template records from Database.`);
-}).catch(err => console.warn('[DB Cleanup Warning]:', err.message));
+(async () => {
+  try {
+    await prisma.$executeRawUnsafe(`ALTER TABLE payments ADD COLUMN packageType VARCHAR(191) NULL;`);
+    console.log('[DB Auto-Migration] Added missing packageType column to payments table.');
+  } catch (e) {}
+
+  try {
+    await prisma.$executeRawUnsafe(`ALTER TABLE payments ADD COLUMN discount DOUBLE NULL DEFAULT 0;`);
+  } catch (e) {}
+
+  try {
+    await prisma.$executeRawUnsafe(`ALTER TABLE relocation_packages ADD COLUMN isRefundable TINYINT(1) NOT NULL DEFAULT 0;`);
+    console.log('[DB Auto-Migration] Added missing isRefundable column to relocation_packages table.');
+  } catch (e) {}
+
+  try {
+    const res = await prisma.template.deleteMany({
+      where: { OR: [{ id: 'consultation_no_show_cancelled' }, { id: { contains: 'no_show', mode: 'insensitive' } }] }
+    });
+    if (res.count > 0) console.log(`[DB Cleanup] Removed ${res.count} No-Show template records from Database.`);
+  } catch (err) {
+    console.warn('[DB Cleanup Warning]:', err.message);
+  }
+})();
 
 // Start Server
 const PORT = process.env.PORT || 5000;

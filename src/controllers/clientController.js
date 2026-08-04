@@ -345,6 +345,10 @@ const updateClientStatus = async (req, res) => {
       data.nextFollowUpDate = nextFollowUpDate ? new Date(nextFollowUpDate) : null;
     }
 
+    if (['Partially Paid', 'Payment Completed', 'Paid', 'Payment Received', 'Active', 'Under Process'].includes(status)) {
+      data.documentUploadAllowed = true;
+    }
+
     const client = await prisma.client.update({
       where: { id },
       data

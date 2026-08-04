@@ -314,6 +314,34 @@ const createRefundRequest = async (req, res) => {
       return res.status(400).json({ message: 'Client ID is required' });
     }
 
+    const targetClient = await prisma.client.findUnique({ where: { id: targetClientId } });
+
+    // Check if client has paid for a package with isRefundable = true
+    const refundableDbPackages = await prisma.relocationPackage.findMany({
+      where: { isRefundable: true }
+    }).catch(() => []);
+    const refundableCodes = (refundableDbPackages || []).map(p => p.code || p.id).filter(Boolean);
+    const allRefundableCodes = Array.from(new Set([...refundableCodes, 'full_process', 'premium', 'OPTION_B', 'OPTION_C', 'opt_b', 'opt_c']));
+
+    const paidRefundablePayments = await prisma.payment.findMany({
+      where: {
+        clientId: targetClientId,
+        status: 'Paid',
+        packageType: { in: allRefundableCodes }
+      }
+    });
+
+    const isEligiblePkg = (
+      paidRefundablePayments.length > 0 ||
+      allRefundableCodes.includes(targetClient?.packageId)
+    );
+
+    if (!isEligiblePkg && req.user?.role === 'client') {
+      return res.status(400).json({
+        message: 'Refund requests are not available for non-refundable packages (Case Assessment €250, Option D, Tourist Visa). Refund eligibility applies only to Full Processing (Option B) and Premium (Option C) packages.'
+      });
+    }
+
     let refundAmount = Number(amount) || 0;
 
     if (category === 'Visa Rejection' || (category && category.includes('Visa Rejection'))) {

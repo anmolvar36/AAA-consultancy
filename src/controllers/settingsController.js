@@ -366,7 +366,7 @@ const getPackages = async (req, res) => {
 
 const createPackage = async (req, res) => {
   try {
-    const { code, name, description, price, additionalApplicantPrice, isRecommended, includes } = req.body;
+    const { code, name, description, price, additionalApplicantPrice, isRecommended, isRefundable, includes } = req.body;
 
     if (isRecommended) {
       await prisma.relocationPackage.updateMany({
@@ -382,6 +382,7 @@ const createPackage = async (req, res) => {
         price: Number(price) || 0,
         additionalApplicantPrice: Number(additionalApplicantPrice) || 500,
         isRecommended: !!isRecommended,
+        isRefundable: !!isRefundable,
         includes: Array.isArray(includes) ? includes : []
       }
     });
@@ -468,6 +469,7 @@ const updatePackages = async (req, res) => {
       if (p.code) dataToSave.code = p.code;
       if (p.additionalApplicantPrice !== undefined) dataToSave.additionalApplicantPrice = Number(p.additionalApplicantPrice) || 500;
       if (p.isRecommended !== undefined) dataToSave.isRecommended = !!p.isRecommended;
+      if (p.isRefundable !== undefined) dataToSave.isRefundable = !!p.isRefundable;
 
       if (existing) {
         try {
